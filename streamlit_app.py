@@ -490,13 +490,16 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         pdf.cell(0, 8, clean_text("No se encontraron datos de horarios en el reporte."), ln=True)
 
     # =========================================================
-    # 3. ANÁLISIS DE FALLAS Y PARADAS PROGRAMADAS (NUEVO TABLERO)
+    # 3. ANÁLISIS DE FALLAS Y PARADAS PROGRAMADAS
     # =========================================================
     df_fallas_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('FALLA', na=False)]
     df_paradas_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('PARADA PROGRAMADA', na=False)]
     
+    # Identificamos la Columna Q dinámicamente para usarla en el detalle de paradas
+    col_desc_parada = df_pdf.columns[16] if len(df_pdf.columns) > 16 else 'Nivel Evento 4'
+    
     tiene_fallas = not df_fallas_area.empty and 'Nivel Evento 6' in df_fallas_area.columns
-    tiene_paradas = not df_paradas_area.empty and 'Nivel Evento 2' in df_paradas_area.columns
+    tiene_paradas = not df_paradas_area.empty and col_desc_parada in df_paradas_area.columns
 
     if tiene_fallas or tiene_paradas:
         check_space(pdf, 110)
@@ -576,14 +579,14 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
                 pdf.cell(0, 6, clean_text(">> Fallas Registradas:"), ln=True)
                 dibujar_tabla_eventos(df_maq_fallas, 'Nivel Evento 6')
             
-            # Tabla 2: Paradas Programadas
+            # Tabla 2: Paradas Programadas (Utiliza la columna Q)
             df_maq_paradas = df_paradas_area[df_paradas_area['Máquina'] == maq] if tiene_paradas else pd.DataFrame()
             if not df_maq_paradas.empty:
                 check_space(pdf, 20)
                 pdf.set_font("Arial", 'B', 8)
                 pdf.set_text_color(200, 150, 0) # Naranja
                 pdf.cell(0, 6, clean_text(">> Paradas Programadas Registradas:"), ln=True)
-                dibujar_tabla_eventos(df_maq_paradas, 'Nivel Evento 2')
+                dibujar_tabla_eventos(df_maq_paradas, col_desc_parada)
 
     else:
         check_space(pdf, 25)
