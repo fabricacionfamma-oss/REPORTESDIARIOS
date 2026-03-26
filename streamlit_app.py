@@ -24,6 +24,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- TÍTULO Y BOTÓN DE ACTUALIZAR DATOS ---
 col_title, col_btn = st.columns([4, 1])
 with col_title:
     st.markdown('<div class="header-style">📄 Reportes PDF - FAMMA</div>', unsafe_allow_html=True)
@@ -37,7 +38,7 @@ with col_btn:
 st.divider()
 
 # ==========================================
-# 2. CARGA DE DATOS ROBUSTA
+# 2. CARGA DE DATOS ROBUSTA (8 HOJAS)
 # ==========================================
 @st.cache_data(ttl=300)
 def load_data():
@@ -339,13 +340,13 @@ def redactar_resumen_ejecutivo(pdf, area, df_pdf, df_oee_target):
 def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_date, p_tipo):
     # ASIGNACIÓN DE COLORES DINÁMICA
     if area.upper() == "ESTAMPADO":
-        theme_color = (41, 128, 185)    # Azul institucional (Base de tablas)
-        subtitle_color = (41, 128, 185) # Azul (Subtítulos)
+        theme_color = (41, 128, 185)    # Azul institucional (Base de tablas y secciones)
+        subtitle_color = (41, 128, 185) # Azul (Máquinas y Gráficos)
         chart_bars = ['#1F77B4', '#AEC7E8', '#FF7F0E']
         hex_subtitle = '#%02x%02x%02x' % subtitle_color
     else:
-        theme_color = (211, 84, 0)      # Naranja institucional (Base de tablas)
-        subtitle_color = (41, 128, 185) # Azul (Exclusivo para subtítulos y gráficos de fallas)
+        theme_color = (211, 84, 0)      # Naranja institucional (Secciones principales y tablas)
+        subtitle_color = (23, 165, 137) # Verde azulado (Exclusivo para Nombre de Máquina y Gráficos)
         chart_bars = ['#E67E22', '#FAD7A1', '#1F77B4']
         hex_subtitle = '#%02x%02x%02x' % subtitle_color
         
@@ -375,7 +376,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
 
     # 1. OEE
     check_space(pdf, 65)
-    print_section_title(pdf, "1. Resumen General y OEE", subtitle_color)
+    print_section_title(pdf, "1. Resumen General y OEE", theme_color) # Vuelve al color base
     
     metrics_area = get_metrics_direct(area, oee_target_df)
     print_pdf_metric_row(pdf, f"General {area.upper()}", metrics_area)
@@ -413,7 +414,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # 2. HORARIOS Y TIEMPO DE APERTURA
     # =========================================================
     check_space(pdf, 50)
-    print_section_title(pdf, "2. Horarios y Tiempo de Apertura", subtitle_color)
+    print_section_title(pdf, "2. Horarios y Tiempo de Apertura", theme_color) # Vuelve al color base
     
     col_inicio = next((c for c in df_pdf.columns if 'inicio' in c.lower() or 'desde' in c.lower()), None)
     col_fin = next((c for c in df_pdf.columns if 'fin' in c.lower() or 'hasta' in c.lower()), None)
@@ -551,7 +552,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # 3. ANÁLISIS DE FALLAS Y PARADAS POR MÁQUINA
     # =========================================================
     check_space(pdf, 40)
-    print_section_title(pdf, "3. Analisis de Fallas y Paradas por Maquina", subtitle_color)
+    print_section_title(pdf, "3. Analisis de Fallas y Paradas por Maquina", theme_color) # Vuelve al color base
     
     df_fallas_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('FALLA', na=False)]
     df_paradas_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('PARADA PROGRAMADA', na=False)]
@@ -579,7 +580,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         hubo_eventos_en_grupo = True
         check_space(pdf, 60)
         
-        # Título de la máquina DESTACADO EN AZUL
+        # Título de la máquina DESTACADO EN COLOR SECUNDARIO (AZUL)
         pdf.ln(5)
         pdf.set_font("Arial", 'B', 12)
         pdf.set_text_color(255, 255, 255)
@@ -587,7 +588,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         pdf.cell(0, 9, clean_text(f"  MÁQUINA: {maq}"), border=0, ln=True, fill=True)
         pdf.ln(2)
         
-        # Fila Resumen de Tiempos (Mantiene el Naranja institucional)
+        # Fila Resumen de Tiempos (Mantiene Naranja institucional)
         setup_table_header(pdf, theme_color)
         pdf.set_font("Arial", 'B', 8)
         
@@ -631,6 +632,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
             agg_f['Porcentaje'] = (agg_f['Tiempo (Min)'] / total_falla_maq) * 100
             agg_f['Label'] = agg_f.apply(lambda r: f"{r['Tiempo (Min)']:.0f} min ({r['Porcentaje']:.1f}%)", axis=1)
             
+            # Gráfico de barras usando el color azul (hex_subtitle)
             fig_top3 = px.bar(agg_f, x='Tiempo (Min)', y='Nivel Evento 6', orientation='h', text='Label')
             fig_top3.update_traces(marker_color=hex_subtitle, textposition='outside', cliponaxis=False)
             fig_top3.update_layout(
@@ -666,7 +668,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         if not df_maq_proyectos.empty:
             check_space(pdf, 25)
             pdf.set_font("Arial", 'B', 9)
-            pdf.set_text_color(33, 195, 84)
+            pdf.set_text_color(33, 195, 84) # Verde
             pdf.cell(0, 6, clean_text("> Detalle de paradas por proyecto:"), ln=True)
             dibujar_tabla_eventos_detallada(df_maq_proyectos, col_desc_parada, mostrar_categoria=False)
             
@@ -682,7 +684,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # =========================================================
     if not df_pdf.empty:
         check_space(pdf, 75)
-        print_section_title(pdf, "4. Resumen General de Tiempos del Area", subtitle_color)
+        print_section_title(pdf, "4. Resumen General de Tiempos del Area", theme_color) # Vuelve al color base
         
         def categorizar_evento(row):
             evento = str(row.get('Evento', '')).upper()
@@ -745,7 +747,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # =========================================================
     if not df_prod_pdf.empty and 'Buenas' in df_prod_pdf.columns:
         check_space(pdf, 80)
-        print_section_title(pdf, "5. Produccion por Maquina", subtitle_color)
+        print_section_title(pdf, "5. Produccion por Maquina", theme_color) # Vuelve al color base
         prod_maq = df_prod_pdf.groupby('Máquina')[['Buenas', 'Retrabajo', 'Observadas']].sum().reset_index()
         fig_prod = px.bar(prod_maq, x='Máquina', y=['Buenas', 'Retrabajo', 'Observadas'], barmode='stack', color_discrete_sequence=chart_bars, text_auto=True)
         fig_prod.update_layout(width=800, height=350, margin=dict(t=40, b=100, l=40, r=40), plot_bgcolor='rgba(0,0,0,0)')
@@ -786,7 +788,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # 6. PERFORMANCE DE OPERARIOS 
     # =========================================================
     check_space(pdf, 60)
-    print_section_title(pdf, "6. Performance de Operarios y Maquinas", subtitle_color)
+    print_section_title(pdf, "6. Performance de Operarios y Maquinas", theme_color) # Vuelve al color base
     pdf.set_font("Arial", 'I', 10)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 6, clean_text("Cuadro de desempeno y maquinas operadas en el sector."), ln=True)
@@ -900,7 +902,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # =========================================================
     def agregar_tabla_tiempos_operarios(titulo, regex_keyword, numero_seccion):
         check_space(pdf, 30)
-        print_section_title(pdf, f"{numero_seccion}. {titulo}", subtitle_color)
+        print_section_title(pdf, f"{numero_seccion}. {titulo}", theme_color) # Vuelve al color base
 
         try:
             if all(c in df_pdf.columns for c in ['Operador', 'Tiempo (Min)', 'Nivel Evento 3']):
