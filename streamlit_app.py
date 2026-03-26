@@ -376,7 +376,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
 
     # 1. OEE
     check_space(pdf, 65)
-    print_section_title(pdf, "1. Resumen General y OEE", theme_color) # Vuelve al color base
+    print_section_title(pdf, "1. Resumen General y OEE", theme_color) 
     
     metrics_area = get_metrics_direct(area, oee_target_df)
     print_pdf_metric_row(pdf, f"General {area.upper()}", metrics_area)
@@ -386,12 +386,13 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     pdf.cell(0, 6, clean_text("Tiempos Promedio (por registro en el periodo):"), ln=True)
     pdf.set_font("Arial", '', 10)
     
-    if not df_pdf.empty and 'Nivel Evento 3' in df_pdf.columns:
-        eventos_completos = df_pdf['Nivel Evento 3'].astype(str) + " " + df_pdf.get('Nivel Evento 4', '').astype(str)
-        df_pdf['_evento_completo'] = eventos_completos
+    if not df_pdf.empty:
+        # CORRECCIÓN DE BÚSQUEDA BAÑO/REFRIGERIO: Buscamos específicamente en la columna Nivel Evento 4 (o 3)
+        # para que "BAÑO / REFRIGERIO" no mezcle los resultados
+        col_tiempos = 'Nivel Evento 4' if 'Nivel Evento 4' in df_pdf.columns else 'Nivel Evento 3'
         
-        avg_bano = df_pdf[df_pdf['_evento_completo'].str.contains('BAÑO|BANO', case=False, na=False)]['Tiempo (Min)'].mean()
-        avg_refr = df_pdf[df_pdf['_evento_completo'].str.contains('REFRIGERIO', case=False, na=False)]['Tiempo (Min)'].mean()
+        avg_bano = df_pdf[df_pdf[col_tiempos].astype(str).str.contains('BAÑO|BANO', case=False, na=False)]['Tiempo (Min)'].mean()
+        avg_refr = df_pdf[df_pdf[col_tiempos].astype(str).str.contains('REFRIGERIO', case=False, na=False)]['Tiempo (Min)'].mean()
         
         str_bano = f"   - Promedio Baño: {avg_bano:.1f} min" if pd.notna(avg_bano) else "   - Promedio Baño: Sin registros"
         str_refr = f"   - Promedio Refrigerio: {avg_refr:.1f} min" if pd.notna(avg_refr) else "   - Promedio Refrigerio: Sin registros"
@@ -414,7 +415,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # 2. HORARIOS Y TIEMPO DE APERTURA
     # =========================================================
     check_space(pdf, 50)
-    print_section_title(pdf, "2. Horarios y Tiempo de Apertura", theme_color) # Vuelve al color base
+    print_section_title(pdf, "2. Horarios y Tiempo de Apertura", theme_color) 
     
     col_inicio = next((c for c in df_pdf.columns if 'inicio' in c.lower() or 'desde' in c.lower()), None)
     col_fin = next((c for c in df_pdf.columns if 'fin' in c.lower() or 'hasta' in c.lower()), None)
@@ -552,7 +553,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # 3. ANÁLISIS DE FALLAS Y PARADAS POR MÁQUINA
     # =========================================================
     check_space(pdf, 40)
-    print_section_title(pdf, "3. Analisis de Fallas y Paradas por Maquina", theme_color) # Vuelve al color base
+    print_section_title(pdf, "3. Analisis de Fallas y Paradas por Maquina", theme_color) 
     
     df_fallas_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('FALLA', na=False)]
     df_paradas_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('PARADA PROGRAMADA', na=False)]
@@ -905,10 +906,11 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         print_section_title(pdf, f"{numero_seccion}. {titulo}", theme_color) # Vuelve al color base
 
         try:
-            if all(c in df_pdf.columns for c in ['Operador', 'Tiempo (Min)', 'Nivel Evento 3']):
+            col_t = 'Nivel Evento 4' if 'Nivel Evento 4' in df_pdf.columns else 'Nivel Evento 3'
+            if all(c in df_pdf.columns for c in ['Operador', 'Tiempo (Min)', col_t]):
                 s_operario = df_pdf['Operador']
                 s_tiempo = pd.to_numeric(df_pdf['Tiempo (Min)'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
-                s_evento = df_pdf['Nivel Evento 3'].astype(str)
+                s_evento = df_pdf[col_t].astype(str)
 
                 df_temp = pd.DataFrame({
                     'Operario': s_operario,
