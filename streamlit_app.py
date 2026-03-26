@@ -24,7 +24,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- TÍTULO Y BOTÓN DE ACTUALIZAR DATOS ---
 col_title, col_btn = st.columns([4, 1])
 with col_title:
     st.markdown('<div class="header-style">📄 Reportes PDF - FAMMA</div>', unsafe_allow_html=True)
@@ -38,7 +37,7 @@ with col_btn:
 st.divider()
 
 # ==========================================
-# 2. CARGA DE DATOS ROBUSTA (8 HOJAS)
+# 2. CARGA DE DATOS ROBUSTA
 # ==========================================
 @st.cache_data(ttl=300)
 def load_data():
@@ -339,11 +338,13 @@ def redactar_resumen_ejecutivo(pdf, area, df_pdf, df_oee_target):
 # ==========================================
 def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_date, p_tipo):
     if area.upper() == "ESTAMPADO":
-        theme_color = (41, 128, 185)
+        theme_color = (41, 128, 185) # Azul
         chart_bars = ['#1F77B4', '#AEC7E8', '#FF7F0E']
     else:
-        theme_color = (211, 84, 0)
-        chart_bars = ['#E67E22', '#FAD7A1', '#d62728']
+        # CAMBIO DE COLOR PARA SOLDADURA (Azul Verdoso / Celeste Oscuro)
+        theme_color = (23, 165, 137) 
+        chart_bars = ['#17A589', '#48C9B0', '#A3E4D7']
+        
     hex_theme = '#%02x%02x%02x' % theme_color
 
     if ini_date is not None and fin_date is not None:
@@ -353,7 +354,6 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         df_pdf_raw = pd.DataFrame(columns=df_raw.columns)
         df_prod_pdf_raw = pd.DataFrame(columns=df_prod_raw.columns)
 
-    # El df_pdf ya viene exclusivamente filtrado para la planta actual
     df_pdf = df_pdf_raw[df_pdf_raw['Fábrica'].str.contains(area, case=False, na=False)].copy()
     
     df_prod_pdf = pd.DataFrame()
@@ -376,15 +376,17 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     metrics_area = get_metrics_direct(area, oee_target_df)
     print_pdf_metric_row(pdf, f"General {area.upper()}", metrics_area)
     
-    # AGREGADO: Promedio de Tiempos (Baño y Refrigerio)
     pdf.ln(2)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 6, clean_text("Tiempos Promedio (por registro en el periodo):"), ln=True)
     pdf.set_font("Arial", '', 10)
     
     if not df_pdf.empty and 'Nivel Evento 3' in df_pdf.columns:
-        avg_bano = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.contains('BAÑO|BANO', case=False, na=False)]['Tiempo (Min)'].mean()
-        avg_refr = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.contains('REFRIGERIO', case=False, na=False)]['Tiempo (Min)'].mean()
+        eventos_completos = df_pdf['Nivel Evento 3'].astype(str) + " " + df_pdf.get('Nivel Evento 4', '').astype(str)
+        df_pdf['_evento_completo'] = eventos_completos
+        
+        avg_bano = df_pdf[df_pdf['_evento_completo'].str.contains('BAÑO|BANO', case=False, na=False)]['Tiempo (Min)'].mean()
+        avg_refr = df_pdf[df_pdf['_evento_completo'].str.contains('REFRIGERIO', case=False, na=False)]['Tiempo (Min)'].mean()
         
         str_bano = f"   - Promedio Baño: {avg_bano:.1f} min" if pd.notna(avg_bano) else "   - Promedio Baño: Sin registros"
         str_refr = f"   - Promedio Refrigerio: {avg_refr:.1f} min" if pd.notna(avg_refr) else "   - Promedio Refrigerio: Sin registros"
@@ -404,7 +406,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     pdf.ln(3) 
 
     # =========================================================
-    # 2. HORARIOS Y TIEMPO DE APERTURA (ACTUALIZADO CON CÁLCULO NETO)
+    # 2. HORARIOS Y TIEMPO DE APERTURA
     # =========================================================
     check_space(pdf, 50)
     print_section_title(pdf, "2. Horarios y Tiempo de Apertura", theme_color)
@@ -414,7 +416,6 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     
     tiempo_teorico_area = 0
     
-    # Función auxiliar unificada para tablas de eventos
     def dibujar_tabla_eventos_detallada(df_subset, col_detalle, mostrar_categoria=False):
         setup_table_header(pdf, theme_color)
         pdf.set_font("Arial", 'B', 8)
@@ -440,7 +441,6 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         setup_table_row(pdf)
         pdf.set_font("Arial", '', 8)
         
-        # Orden Cronológico Correcto (parseado a minutos)
         if col_inicio and col_inicio in df_subset.columns:
             df_subset['_sort_time'] = df_subset[col_inicio].apply(lambda x: parse_time_to_mins(x) if pd.notna(x) else 9999)
             df_subset = df_subset.sort_values(['Fecha_Filtro', '_sort_time'], ascending=[True, True])
@@ -456,7 +456,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
             detalle_str = str(row[col_detalle]) if col_detalle in row and pd.notna(row[col_detalle]) else str(row.get('Evento', '-'))
             
             if mostrar_categoria:
-                categoria_str = " " + str(row.get('Nivel Evento 5', '-'))[:15] # En FAMMA la Categoría de falla está en Nivel Evento 5
+                categoria_str = " " + str(row.get('Nivel Evento 5', '-'))[:15]
                 pdf.cell(w_f, 6, val_fecha, border='B', align='C')
                 pdf.cell(w_i, 6, val_inicio, border='B', align='C')
                 pdf.cell(w_f2, 6, val_fin, border='B', align='C')
@@ -471,7 +471,6 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
                 pdf.cell(w_d, 6, clean_text(detalle_str[:60]), border='B')
                 pdf.cell(w_m, 6, minutos, border='B', align='C')
                 pdf.cell(w_o, 6, clean_text(operador), border='B', ln=True)
-
 
     if col_inicio and col_fin and not df_pdf.empty:
         tiempos_list = []
@@ -545,18 +544,17 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         pdf.cell(0, 8, clean_text("No se encontraron datos de horarios en el reporte."), ln=True)
 
     # =========================================================
-    # 3. ANÁLISIS DE FALLAS Y PARADAS POR MÁQUINA (FORMATO NUEVO)
+    # 3. ANÁLISIS DE FALLAS Y PARADAS POR MÁQUINA
     # =========================================================
     check_space(pdf, 40)
     print_section_title(pdf, "3. Analisis de Fallas y Paradas por Maquina", theme_color)
     
-    # IMPORTANTE: FAMMA usa "Evento" para determinar Producción, y Nivel Evento 3 para Fallas/Paradas
     df_fallas_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('FALLA', na=False)]
     df_paradas_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('PARADA PROGRAMADA', na=False)]
     df_proyectos_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('PROYECTO', na=False)]
     df_produccion_area = df_pdf[df_pdf['Evento'].astype(str).str.upper().str.contains('PRODUCCION|PRODUCCIÓN', na=False)]
     
-    col_desc_parada = 'Nivel Evento 4' # En FAMMA la descripción de la parada (SMED, etc) está acá
+    col_desc_parada = 'Nivel Evento 4'
     
     maquinas_con_eventos = sorted(set(df_pdf['Máquina'].unique()))
     hubo_eventos_en_grupo = False
@@ -577,7 +575,6 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         hubo_eventos_en_grupo = True
         check_space(pdf, 60)
         
-        # Título de la máquina DESTACADO
         pdf.ln(5)
         pdf.set_font("Arial", 'B', 12)
         pdf.set_text_color(255, 255, 255)
@@ -585,7 +582,6 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         pdf.cell(0, 9, clean_text(f"  MÁQUINA: {maq}"), border=0, ln=True, fill=True)
         pdf.ln(2)
         
-        # Fila Resumen de Tiempos (Dinámico: 3 o 4 columnas)
         setup_table_header(pdf, theme_color)
         pdf.set_font("Arial", 'B', 8)
         
@@ -614,28 +610,29 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
 
         pdf.ln(2)
         
-        # --- TOP 3 Fallas (Gráfico de Barras Ajustado) ---
+        # --- CORRECCIÓN VISUAL: TOP 3 Fallas ---
         if not df_maq_fallas.empty and 'Nivel Evento 6' in df_maq_fallas.columns:
             check_space(pdf, 60)
             pdf.set_font("Arial", 'B', 10)
             pdf.set_text_color(220, 20, 20)
             pdf.cell(0, 6, clean_text("Top 3 Fallas (por tiempo):"), ln=True)
 
-            # FAMMA usa Nivel Evento 6 para el detalle específico de la falla
             agg_f = df_maq_fallas.groupby('Nivel Evento 6')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False).head(3)
             total_falla_maq = t_falla if t_falla > 0 else 1
+            max_val = agg_f['Tiempo (Min)'].max()
             
             agg_f['Nivel Evento 6'] = agg_f['Nivel Evento 6'].apply(lambda x: str(x)[:30] + '...' if len(str(x)) > 30 else str(x))
             agg_f['Porcentaje'] = (agg_f['Tiempo (Min)'] / total_falla_maq) * 100
             agg_f['Label'] = agg_f.apply(lambda r: f"{r['Tiempo (Min)']:.0f} min ({r['Porcentaje']:.1f}%)", axis=1)
             
+            # Ajuste de márgenes y eje X para que la etiqueta nunca se corte
             fig_top3 = px.bar(agg_f, x='Tiempo (Min)', y='Nivel Evento 6', orientation='h', text='Label')
-            fig_top3.update_traces(marker_color='#d9534f', textposition='outside')
+            fig_top3.update_traces(marker_color='#d9534f', textposition='outside', cliponaxis=False)
             fig_top3.update_layout(
                 height=140, width=700,
-                margin=dict(t=5, b=5, l=260, r=80), 
+                margin=dict(t=5, b=5, l=260, r=120), # Margen extra a la derecha y gran margen a la izquierda
                 plot_bgcolor='rgba(0,0,0,0)', 
-                xaxis=dict(visible=False),
+                xaxis=dict(visible=False, range=[0, max_val * 1.35]), # Extiende el eje un 35% para que entre el texto
                 yaxis=dict(title='', autorange="reversed", tickfont=dict(size=12, color='black'))
             )
             
@@ -664,7 +661,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         if not df_maq_proyectos.empty:
             check_space(pdf, 25)
             pdf.set_font("Arial", 'B', 9)
-            pdf.set_text_color(33, 195, 84) # Verde
+            pdf.set_text_color(33, 195, 84)
             pdf.cell(0, 6, clean_text("> Detalle de paradas por proyecto:"), ln=True)
             dibujar_tabla_eventos_detallada(df_maq_proyectos, col_desc_parada, mostrar_categoria=False)
             
@@ -676,13 +673,12 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         pdf.cell(0, 7, clean_text("No se registraron actividades en el area en el periodo."), ln=True)
 
     # =========================================================
-    # 4. RESUMEN GENERAL DE TIEMPOS (TORTA DINÁMICA)
+    # 4. RESUMEN GENERAL DE TIEMPOS
     # =========================================================
     if not df_pdf.empty:
         check_space(pdf, 75)
         print_section_title(pdf, "4. Resumen General de Tiempos del Area", theme_color)
         
-        # Categorizar los datos específicamente para la torta
         def categorizar_evento(row):
             evento = str(row.get('Evento', '')).upper()
             if 'PRODUCCION' in evento or 'PRODUCCIÓN' in evento:
@@ -883,7 +879,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
             if area.upper() == "ESTAMPADO":
                 imprimir_cuadro_perfo("Operarios ESTAMPADO", df_est, (41, 128, 185)) 
             elif area.upper() == "SOLDADURA":
-                imprimir_cuadro_perfo("Operarios SOLDADURA", df_sol, (211, 84, 0)) 
+                imprimir_cuadro_perfo("Operarios SOLDADURA", df_sol, (23, 165, 137)) 
             
         else:
             pdf.set_font("Arial", '', 10)
