@@ -24,7 +24,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- TÍTULO Y BOTÓN DE ACTUALIZAR DATOS ---
 col_title, col_btn = st.columns([4, 1])
 with col_title:
     st.markdown('<div class="header-style">📄 Reportes PDF - FAMMA</div>', unsafe_allow_html=True)
@@ -38,7 +37,7 @@ with col_btn:
 st.divider()
 
 # ==========================================
-# 2. CARGA DE DATOS ROBUSTA (8 HOJAS)
+# 2. CARGA DE DATOS ROBUSTA
 # ==========================================
 @st.cache_data(ttl=300)
 def load_data():
@@ -524,7 +523,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
                 pdf.ln(2)
                 col_h1, col_h2, col_h3, col_h4 = "Inicio Prom.", "Cierre Prom.", "Apertura Neta Prom.", "No Reg. Prom."
             
-            setup_table_header(pdf, theme_color) # La tabla mantiene el Naranja institucional
+            setup_table_header(pdf, theme_color)
             pdf.set_font("Arial", 'B', 9)
             pdf.cell(46, 7, clean_text("Maquina"), border=1, fill=True)
             pdf.cell(28, 7, clean_text(col_h1), border=1, align='C', fill=True)
@@ -588,7 +587,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         pdf.cell(0, 9, clean_text(f"  MÁQUINA: {maq}"), border=0, ln=True, fill=True)
         pdf.ln(2)
         
-        # Fila Resumen de Tiempos (Mantiene Naranja)
+        # Fila Resumen de Tiempos (Mantiene el Naranja institucional)
         setup_table_header(pdf, theme_color)
         pdf.set_font("Arial", 'B', 8)
         
@@ -632,7 +631,6 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
             agg_f['Porcentaje'] = (agg_f['Tiempo (Min)'] / total_falla_maq) * 100
             agg_f['Label'] = agg_f.apply(lambda r: f"{r['Tiempo (Min)']:.0f} min ({r['Porcentaje']:.1f}%)", axis=1)
             
-            # Gráfico de barras usando el color azul (hex_subtitle)
             fig_top3 = px.bar(agg_f, x='Tiempo (Min)', y='Nivel Evento 6', orientation='h', text='Label')
             fig_top3.update_traces(marker_color=hex_subtitle, textposition='outside', cliponaxis=False)
             fig_top3.update_layout(
@@ -886,7 +884,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
             if area.upper() == "ESTAMPADO":
                 imprimir_cuadro_perfo("Operarios ESTAMPADO", df_est, (41, 128, 185)) 
             elif area.upper() == "SOLDADURA":
-                imprimir_cuadro_perfo("Operarios SOLDADURA", theme_color) 
+                imprimir_cuadro_perfo("Operarios SOLDADURA", df_sol, theme_color) 
             
         else:
             pdf.set_font("Arial", '', 10)
