@@ -382,9 +382,9 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     pdf.cell(0, 6, clean_text("Tiempos Promedio (por registro en el periodo):"), ln=True)
     pdf.set_font("Arial", '', 10)
     
-    if not df_pdf.empty:
-        avg_bano = df_pdf[df_pdf['Nivel Evento 4'].astype(str).str.contains('Baño', case=False, na=False)]['Tiempo (Min)'].mean()
-        avg_refr = df_pdf[df_pdf['Nivel Evento 4'].astype(str).str.contains('Refrigerio', case=False, na=False)]['Tiempo (Min)'].mean()
+    if not df_pdf.empty and 'Nivel Evento 3' in df_pdf.columns:
+        avg_bano = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.contains('BAÑO|BANO', case=False, na=False)]['Tiempo (Min)'].mean()
+        avg_refr = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.contains('REFRIGERIO', case=False, na=False)]['Tiempo (Min)'].mean()
         
         str_bano = f"   - Promedio Baño: {avg_bano:.1f} min" if pd.notna(avg_bano) else "   - Promedio Baño: Sin registros"
         str_refr = f"   - Promedio Refrigerio: {avg_refr:.1f} min" if pd.notna(avg_refr) else "   - Promedio Refrigerio: Sin registros"
@@ -456,7 +456,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
             detalle_str = str(row[col_detalle]) if col_detalle in row and pd.notna(row[col_detalle]) else str(row.get('Evento', '-'))
             
             if mostrar_categoria:
-                categoria_str = " " + str(row.get('Nivel Evento 5', '-'))[:15] # Asumimos Nivel Evento 5 para Categoría en FAMMA
+                categoria_str = " " + str(row.get('Nivel Evento 5', '-'))[:15] # En FAMMA la Categoría de falla está en Nivel Evento 5
                 pdf.cell(w_f, 6, val_fecha, border='B', align='C')
                 pdf.cell(w_i, 6, val_inicio, border='B', align='C')
                 pdf.cell(w_f2, 6, val_fin, border='B', align='C')
@@ -550,13 +550,13 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     check_space(pdf, 40)
     print_section_title(pdf, "3. Analisis de Fallas y Paradas por Maquina", theme_color)
     
-    # En FAMMA Nivel Evento 3 determina el tipo de evento principal
+    # IMPORTANTE: FAMMA usa "Evento" para determinar Producción, y Nivel Evento 3 para Fallas/Paradas
     df_fallas_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('FALLA', na=False)]
     df_paradas_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('PARADA PROGRAMADA', na=False)]
     df_proyectos_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('PROYECTO', na=False)]
-    df_produccion_area = df_pdf[df_pdf['Nivel Evento 3'].astype(str).str.upper().str.contains('PRODUCCION|PRODUCCIÓN', na=False)]
+    df_produccion_area = df_pdf[df_pdf['Evento'].astype(str).str.upper().str.contains('PRODUCCION|PRODUCCIÓN', na=False)]
     
-    col_desc_parada = df_pdf.columns[16] if len(df_pdf.columns) > 16 else 'Nivel Evento 4'
+    col_desc_parada = 'Nivel Evento 4' # En FAMMA la descripción de la parada (SMED, etc) está acá
     
     maquinas_con_eventos = sorted(set(df_pdf['Máquina'].unique()))
     hubo_eventos_en_grupo = False
@@ -682,13 +682,21 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         check_space(pdf, 75)
         print_section_title(pdf, "4. Resumen General de Tiempos del Area", theme_color)
         
-        df_pdf['Nivel Evento 3'] = df_pdf['Nivel Evento 3'].replace('', 'S/D').fillna('S/D')
+        # Categorizar los datos específicamente para la torta
+        def categorizar_evento(row):
+            evento = str(row.get('Evento', '')).upper()
+            if 'PRODUCCION' in evento or 'PRODUCCIÓN' in evento:
+                return 'PRODUCCIÓN'
+            ne3 = str(row.get('Nivel Evento 3', '')).upper()
+            return ne3 if ne3 and ne3 != 'NAN' else 'S/D'
+
+        df_pdf['Categoria_Resumen'] = df_pdf.apply(categorizar_evento, axis=1)
         
-        resumen_tiempos = df_pdf.groupby('Nivel Evento 3')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False)
+        resumen_tiempos = df_pdf.groupby('Categoria_Resumen')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False)
         tiempo_registrado = resumen_tiempos['Tiempo (Min)'].sum()
         tiempo_no_registrado = max(0, tiempo_teorico_area - tiempo_registrado)
         
-        fig_pie = px.pie(resumen_tiempos, values='Tiempo (Min)', names='Nivel Evento 3', hole=0.4, 
+        fig_pie = px.pie(resumen_tiempos, values='Tiempo (Min)', names='Categoria_Resumen', hole=0.4, 
                          color_discrete_sequence=px.colors.qualitative.Pastel)
         fig_pie.update_layout(width=420, height=270, margin=dict(t=10, b=10, l=10, r=10), plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", y=-0.1))
         
@@ -703,7 +711,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
             pdf.cell(70, 7, clean_text("Distribucion (Min):"), ln=True)
             
             for _, row in resumen_tiempos.iterrows():
-                lbl = str(row['Nivel Evento 3']).upper()
+                lbl = str(row['Categoria_Resumen']).upper()
                 val = row['Tiempo (Min)']
                 if val <= 0: continue
                 
@@ -894,17 +902,15 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         print_section_title(pdf, f"{numero_seccion}. {titulo}", theme_color)
 
         try:
-            if df_pdf.shape[1] > 16:
-                s_operario = df_pdf.iloc[:, 0]  # Columna A
-                s_tiempo = df_pdf.iloc[:, 9]    # Columna J
-                s_evento = df_pdf.iloc[:, 16]   # Columna Q
-
-                s_tiempo_num = pd.to_numeric(s_tiempo.astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+            if all(c in df_pdf.columns for c in ['Operador', 'Tiempo (Min)', 'Nivel Evento 3']):
+                s_operario = df_pdf['Operador']
+                s_tiempo = pd.to_numeric(df_pdf['Tiempo (Min)'].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+                s_evento = df_pdf['Nivel Evento 3'].astype(str)
 
                 df_temp = pd.DataFrame({
                     'Operario': s_operario,
-                    'Tiempo': s_tiempo_num,
-                    'Evento': s_evento.astype(str)
+                    'Tiempo': s_tiempo,
+                    'Evento': s_evento
                 })
 
                 mask = df_temp['Evento'].str.contains(regex_keyword, case=False, na=False)
@@ -941,7 +947,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
             else:
                 pdf.set_font("Arial", '', 10)
                 pdf.set_text_color(100, 100, 100)
-                pdf.cell(0, 8, clean_text("Error: La base de datos no tiene suficientes columnas (Faltan A, J o Q)."), ln=True)
+                pdf.cell(0, 8, clean_text("Error: Faltan las columnas de Operador, Tiempo o Evento para calcular."), ln=True)
         except Exception as e:
             pdf.set_font("Arial", '', 10)
             pdf.set_text_color(100, 100, 100)
