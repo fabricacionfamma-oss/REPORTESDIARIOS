@@ -341,16 +341,15 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # ASIGNACIÓN DE COLORES DINÁMICA
     if area.upper() == "ESTAMPADO":
         theme_color = (41, 128, 185)    # Azul institucional (Base de tablas y secciones)
-        subtitle_color = (41, 128, 185) # Azul (Máquinas y Gráficos)
+        subtitle_color = (230, 126, 34) # Naranja cobrizo (Complementario, antes era idéntico al Azul)
         chart_bars = ['#1F77B4', '#AEC7E8', '#FF7F0E']
-        hex_subtitle = '#%02x%02x%02x' % subtitle_color
     else:
         theme_color = (211, 84, 0)      # Naranja institucional (Secciones principales y tablas)
         subtitle_color = (23, 165, 137) # Verde azulado (Exclusivo para Nombre de Máquina y Gráficos)
         chart_bars = ['#E67E22', '#FAD7A1', '#1F77B4']
-        hex_subtitle = '#%02x%02x%02x' % subtitle_color
         
     hex_theme = '#%02x%02x%02x' % theme_color
+    hex_subtitle = '#%02x%02x%02x' % subtitle_color
 
     if ini_date is not None and fin_date is not None:
         df_pdf_raw = df_raw[(df_raw['Fecha_Filtro'] >= ini_date) & (df_raw['Fecha_Filtro'] <= fin_date)]
@@ -581,7 +580,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         hubo_eventos_en_grupo = True
         check_space(pdf, 60)
         
-        # Título de la máquina DESTACADO EN COLOR SECUNDARIO (AZUL)
+        # Título de la máquina DESTACADO EN COLOR SECUNDARIO
         pdf.ln(5)
         pdf.set_font("Arial", 'B', 12)
         pdf.set_text_color(255, 255, 255)
@@ -589,7 +588,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         pdf.cell(0, 9, clean_text(f"  MÁQUINA: {maq}"), border=0, ln=True, fill=True)
         pdf.ln(2)
         
-        # Fila Resumen de Tiempos (Mantiene Naranja institucional)
+        # Fila Resumen de Tiempos (Mantiene el color institucional)
         setup_table_header(pdf, theme_color)
         pdf.set_font("Arial", 'B', 8)
         
@@ -618,30 +617,36 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
 
         pdf.ln(2)
         
-        # --- TOP 3 Fallas (Gráfico de Barras AZUL) ---
+        # --- TOP 3 Fallas (Gráfico de Barras Ajustado y con Color Complementario) ---
         if not df_maq_fallas.empty and 'Nivel Evento 6' in df_maq_fallas.columns:
             check_space(pdf, 60)
             pdf.set_font("Arial", 'B', 10)
-            pdf.set_text_color(220, 20, 20)
+            pdf.set_text_color(*subtitle_color) # <-- TEXTO UNIFICADO AL COLOR COMPLEMENTARIO
             pdf.cell(0, 6, clean_text("Top 3 Fallas (por tiempo):"), ln=True)
 
             agg_f = df_maq_fallas.groupby('Nivel Evento 6')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False).head(3)
             total_falla_maq = t_falla if t_falla > 0 else 1
-            max_val = agg_f['Tiempo (Min)'].max()
             
-            agg_f['Nivel Evento 6'] = agg_f['Nivel Evento 6'].apply(lambda x: str(x)[:30] + '...' if len(str(x)) > 30 else str(x))
+            agg_f['Nivel Evento 6'] = agg_f['Nivel Evento 6'].apply(lambda x: str(x)[:45] + '...' if len(str(x)) > 45 else str(x))
             agg_f['Porcentaje'] = (agg_f['Tiempo (Min)'] / total_falla_maq) * 100
-            agg_f['Label'] = agg_f.apply(lambda r: f"{r['Tiempo (Min)']:.0f} min ({r['Porcentaje']:.1f}%)", axis=1)
             
-            # Gráfico de barras usando el color azul (hex_subtitle)
+            # Etiqueta combinada
+            agg_f['Label'] = agg_f.apply(lambda r: f" {r['Nivel Evento 6']} — {r['Tiempo (Min)']:.0f} min ({r['Porcentaje']:.1f}%)", axis=1)
+            
+            # Gráfico de barras usando el color complementario
             fig_top3 = px.bar(agg_f, x='Tiempo (Min)', y='Nivel Evento 6', orientation='h', text='Label')
-            fig_top3.update_traces(marker_color=hex_subtitle, textposition='outside', cliponaxis=False)
+            fig_top3.update_traces(
+                marker_color=hex_subtitle, 
+                textposition='outside', 
+                textfont=dict(size=13, color='black'),
+                cliponaxis=False
+            )
             fig_top3.update_layout(
                 height=140, width=700,
-                margin=dict(t=5, b=5, l=260, r=120), 
+                margin=dict(t=5, b=5, l=10, r=400), # <-- MÁRGENES AJUSTADOS COMO EN LA OTRA VERSIÓN
                 plot_bgcolor='rgba(0,0,0,0)', 
-                xaxis=dict(visible=False, range=[0, max_val * 1.35]),
-                yaxis=dict(title='', autorange="reversed", tickfont=dict(size=12, color='black'))
+                xaxis=dict(visible=False),
+                yaxis=dict(title='', autorange="reversed", showticklabels=False) # <-- OCULTA ETIQUETAS Y
             )
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart:
@@ -653,7 +658,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         if not df_maq_fallas.empty:
             check_space(pdf, 25)
             pdf.set_font("Arial", 'B', 9)
-            pdf.set_text_color(220, 20, 20)
+            pdf.set_text_color(*subtitle_color) # <-- TEXTO UNIFICADO AL COLOR COMPLEMENTARIO
             pdf.cell(0, 6, clean_text("> Detalle de fallas registradas:"), ln=True)
             dibujar_tabla_eventos_detallada(df_maq_fallas, 'Nivel Evento 6', mostrar_categoria=True)
             pdf.ln(2)
@@ -661,7 +666,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         if not df_maq_paradas.empty:
             check_space(pdf, 25)
             pdf.set_font("Arial", 'B', 9)
-            pdf.set_text_color(200, 150, 0)
+            pdf.set_text_color(*subtitle_color) # <-- TEXTO UNIFICADO AL COLOR COMPLEMENTARIO
             pdf.cell(0, 6, clean_text("> Detalle de paradas programadas:"), ln=True)
             dibujar_tabla_eventos_detallada(df_maq_paradas, col_desc_parada, mostrar_categoria=False)
             pdf.ln(2)
@@ -669,7 +674,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         if not df_maq_proyectos.empty:
             check_space(pdf, 25)
             pdf.set_font("Arial", 'B', 9)
-            pdf.set_text_color(33, 195, 84) # Verde
+            pdf.set_text_color(*subtitle_color) # <-- TEXTO UNIFICADO AL COLOR COMPLEMENTARIO
             pdf.cell(0, 6, clean_text("> Detalle de paradas por proyecto:"), ln=True)
             dibujar_tabla_eventos_detallada(df_maq_proyectos, col_desc_parada, mostrar_categoria=False)
             
