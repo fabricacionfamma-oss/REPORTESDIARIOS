@@ -340,12 +340,12 @@ def redactar_resumen_ejecutivo(pdf, area, df_pdf, df_oee_target):
 def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_date, p_tipo):
     # ASIGNACIÓN DE COLORES DINÁMICA
     if area.upper() == "ESTAMPADO":
-        theme_color = (41, 128, 185)    # Azul institucional (Base de tablas y secciones)
-        subtitle_color = (230, 126, 34) # Naranja cobrizo (Complementario, antes era idéntico al Azul)
+        theme_color = (41, 128, 185)    # Azul institucional
+        subtitle_color = (230, 126, 34) # Naranja cobrizo
         chart_bars = ['#1F77B4', '#AEC7E8', '#FF7F0E']
     else:
-        theme_color = (211, 84, 0)      # Naranja institucional (Secciones principales y tablas)
-        subtitle_color = (23, 165, 137) # Verde azulado (Exclusivo para Nombre de Máquina y Gráficos)
+        theme_color = (211, 84, 0)      # Naranja institucional
+        subtitle_color = (23, 165, 137) # Verde azulado
         chart_bars = ['#E67E22', '#FAD7A1', '#1F77B4']
         
     hex_theme = '#%02x%02x%02x' % theme_color
@@ -386,8 +386,6 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     pdf.set_font("Arial", '', 10)
     
     if not df_pdf.empty:
-        # CORRECCIÓN DE BÚSQUEDA BAÑO/REFRIGERIO: Buscamos específicamente en la columna Nivel Evento 4 (o 3)
-        # para que "BAÑO / REFRIGERIO" no mezcle los resultados
         col_tiempos = 'Nivel Evento 4' if 'Nivel Evento 4' in df_pdf.columns else 'Nivel Evento 3'
         
         avg_bano = df_pdf[df_pdf[col_tiempos].astype(str).str.contains('BAÑO|BANO', case=False, na=False)]['Tiempo (Min)'].mean()
@@ -478,6 +476,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
                 pdf.cell(w_o, 6, clean_text(operador), border='B', ln=True)
 
     if col_inicio and col_fin and not df_pdf.empty:
+        # LÓGICA BASE: Necesaria para el cálculo de tiempo_teorico_area de todo el sector
         tiempos_list = []
         for (maq, fecha), g in df_pdf.groupby(['Máquina', 'Fecha_Filtro']):
             intervals = []
@@ -489,7 +488,6 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
                     intervals.append([ini, fin])
             
             if not intervals: continue
-            
             intervals.sort(key=lambda x: x[0])
             merged = [intervals[0]]
             for current in intervals[1:]:
@@ -509,38 +507,113 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
             tiempos_list.append({'Máquina': maq, 'Inicio': min_i, 'Fin': max_f, 'Total': total_active, 'NoReg': unregistered_time})
             
         tiempo_teorico_area = sum((t['Fin'] - t['Inicio']) for t in tiempos_list) if tiempos_list else 0
-        
         df_horarios = pd.DataFrame(tiempos_list)
         
         if not df_horarios.empty:
-            if p_tipo == "Diario":
-                df_res = df_horarios.sort_values('Máquina')
-                col_h1, col_h2, col_h3, col_h4 = "Hora Inicio", "Hora Cierre", "Apertura Neta", "No Registrado"
+            if p_tipo == "Semanal":
+                # === LÓGICA ESPECÍFICA SEMANAL POR TURNOS ===
+                col_turno = next((c for c in df_pdf.columns if 'turno' in c.lower()), None)
+                if not col_turno:
+                    df_pdf['Turno_Temp'] = 'A'
+                    col_turno = 'Turno_Temp'
+                
+                tiempos_list_sem = []
+                for (maq, fecha, turno), g in df_pdf.groupby(['Máquina', 'Fecha_Filtro', col_turno]):
+                    intervals = []
+                    for _, r in g.iterrows():
+                        ini = parse_time_to_mins(r[col_inicio])
+                        fin = parse_time_to_mins(r[col_fin])
+                        if ini is not None and fin is not None:
+                            if fin < ini and (ini - fin) > 720: fin += 1440
+                            intervals.append([ini, fin])
+                    
+                    if not intervals: continue
+                    intervals.sort(key=lambda x: x[0])
+                    merged = [intervals[0]]
+                    for current in intervals[1:]:
+                        last = merged[-1]
+                        if current[0] <= last[1]: 
+                            last[1] = max(last[1], current[1])
+                        else:
+                            merged.append(current)
+                    
+                    min_i = merged[0][0]
+                    max_f = merged[-1][1]
+                    tiempos_list_sem.append({'Máquina': maq, 'Turno': str(turno).strip().upper(), 'Inicio': min_i, 'Fin': max_f})
+                
+                df_horarios_sem = pd.DataFrame(tiempos_list_sem)
+                
+                if not df_horarios_sem.empty:
+                    df_res_sem = df_horarios_sem.groupby(['Máquina', 'Turno'])[['Inicio', 'Fin']].mean().reset_index()
+                    
+                    pdf.set_font("Arial", 'I', 9)
+                    pdf.set_text_color(100, 100, 100)
+                    pdf.cell(0, 5, clean_text("Promedio semanal de horarios de apertura y cierre organizados por Turno."), ln=True)
+                    pdf.ln(2)
+                    
+                    setup_table_header(pdf, theme_color)
+                    pdf.set_font("Arial", 'B', 9)
+                    pdf.cell(50, 7, clean_text("Maquina"), border=1, fill=True)
+                    pdf.cell(46, 7, clean_text("Turno A (Ini - Fin)"), border=1, align='C', fill=True)
+                    pdf.cell(46, 7, clean_text("Turno B (Ini - Fin)"), border=1, align='C', fill=True)
+                    pdf.cell(46, 7, clean_text("Turno C (Ini - Fin)"), border=1, align='C', ln=True, fill=True)
+                    
+                    setup_table_row(pdf)
+                    pdf.set_font("Arial", '', 9)
+                    
+                    for maq_name in sorted(df_res_sem['Máquina'].unique()):
+                        df_m = df_res_sem[df_res_sem['Máquina'] == maq_name]
+                        
+                        def get_turno_str(t):
+                            row = df_m[df_m['Turno'] == t]
+                            if not row.empty:
+                                i_str = mins_to_time_str(row.iloc[0]['Inicio'])
+                                f_str = mins_to_time_str(row.iloc[0]['Fin'])
+                                return f"{i_str} - {f_str}"
+                            return "-"
+                            
+                        t_a = get_turno_str('A')
+                        t_b = get_turno_str('B')
+                        t_c = get_turno_str('C')
+                        
+                        pdf.cell(50, 7, clean_text(str(maq_name)[:25]), border=1)
+                        pdf.cell(46, 7, clean_text(t_a), border=1, align='C')
+                        pdf.cell(46, 7, clean_text(t_b), border=1, align='C')
+                        pdf.cell(46, 7, clean_text(t_c), border=1, align='C', ln=True)
+                    pdf.ln(5)
+                else:
+                    pdf.set_font("Arial", '', 10)
+                    pdf.cell(0, 8, clean_text("No hay datos de turnos validos para calcular."), ln=True)
             else:
-                df_res = df_horarios.groupby('Máquina').mean().reset_index().sort_values('Máquina')
-                pdf.set_font("Arial", 'I', 9)
-                pdf.set_text_color(100, 100, 100)
-                pdf.cell(0, 5, clean_text("Valores promedio calculados para el periodo seleccionado."), ln=True)
-                pdf.ln(2)
-                col_h1, col_h2, col_h3, col_h4 = "Inicio Prom.", "Cierre Prom.", "Apertura Neta Prom.", "No Reg. Prom."
-            
-            setup_table_header(pdf, theme_color)
-            pdf.set_font("Arial", 'B', 9)
-            pdf.cell(46, 7, clean_text("Maquina"), border=1, fill=True)
-            pdf.cell(28, 7, clean_text(col_h1), border=1, align='C', fill=True)
-            pdf.cell(28, 7, clean_text(col_h2), border=1, align='C', fill=True)
-            pdf.cell(44, 7, clean_text(col_h3), border=1, align='C', fill=True)
-            pdf.cell(44, 7, clean_text(col_h4), border=1, align='C', ln=True, fill=True)
-            
-            setup_table_row(pdf)
-            pdf.set_font("Arial", '', 9)
-            for _, r in df_res.iterrows():
-                pdf.cell(46, 7, clean_text(str(r['Máquina'])[:22]), border=1)
-                pdf.cell(28, 7, clean_text(mins_to_time_str(r['Inicio'])), border=1, align='C')
-                pdf.cell(28, 7, clean_text(mins_to_time_str(r['Fin'])), border=1, align='C')
-                pdf.cell(44, 7, clean_text(mins_to_duration_str(r['Total'])), border=1, align='C')
-                pdf.cell(44, 7, clean_text(mins_to_duration_str(r['NoReg'])), border=1, align='C', ln=True)
-            pdf.ln(5)
+                # === LÓGICA ORIGINAL PARA DIARIO Y MENSUAL ===
+                if p_tipo == "Diario":
+                    df_res = df_horarios.sort_values('Máquina')
+                    col_h1, col_h2, col_h3, col_h4 = "Hora Inicio", "Hora Cierre", "Apertura Neta", "No Registrado"
+                else:
+                    df_res = df_horarios.groupby('Máquina').mean().reset_index().sort_values('Máquina')
+                    pdf.set_font("Arial", 'I', 9)
+                    pdf.set_text_color(100, 100, 100)
+                    pdf.cell(0, 5, clean_text("Valores promedio calculados para el periodo seleccionado."), ln=True)
+                    pdf.ln(2)
+                    col_h1, col_h2, col_h3, col_h4 = "Inicio Prom.", "Cierre Prom.", "Apertura Neta Prom.", "No Reg. Prom."
+                
+                setup_table_header(pdf, theme_color)
+                pdf.set_font("Arial", 'B', 9)
+                pdf.cell(46, 7, clean_text("Maquina"), border=1, fill=True)
+                pdf.cell(28, 7, clean_text(col_h1), border=1, align='C', fill=True)
+                pdf.cell(28, 7, clean_text(col_h2), border=1, align='C', fill=True)
+                pdf.cell(44, 7, clean_text(col_h3), border=1, align='C', fill=True)
+                pdf.cell(44, 7, clean_text(col_h4), border=1, align='C', ln=True, fill=True)
+                
+                setup_table_row(pdf)
+                pdf.set_font("Arial", '', 9)
+                for _, r in df_res.iterrows():
+                    pdf.cell(46, 7, clean_text(str(r['Máquina'])[:22]), border=1)
+                    pdf.cell(28, 7, clean_text(mins_to_time_str(r['Inicio'])), border=1, align='C')
+                    pdf.cell(28, 7, clean_text(mins_to_time_str(r['Fin'])), border=1, align='C')
+                    pdf.cell(44, 7, clean_text(mins_to_duration_str(r['Total'])), border=1, align='C')
+                    pdf.cell(44, 7, clean_text(mins_to_duration_str(r['NoReg'])), border=1, align='C', ln=True)
+                pdf.ln(5)
         else:
             pdf.set_font("Arial", '', 10)
             pdf.cell(0, 8, clean_text("No hay datos de horarios validos para calcular."), ln=True)
@@ -621,7 +694,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         if not df_maq_fallas.empty and 'Nivel Evento 6' in df_maq_fallas.columns:
             check_space(pdf, 60)
             pdf.set_font("Arial", 'B', 10)
-            pdf.set_text_color(*subtitle_color) # <-- TEXTO UNIFICADO AL COLOR COMPLEMENTARIO
+            pdf.set_text_color(*subtitle_color)
             pdf.cell(0, 6, clean_text("Top 3 Fallas (por tiempo):"), ln=True)
 
             agg_f = df_maq_fallas.groupby('Nivel Evento 6')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False).head(3)
@@ -630,10 +703,8 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
             agg_f['Nivel Evento 6'] = agg_f['Nivel Evento 6'].apply(lambda x: str(x)[:45] + '...' if len(str(x)) > 45 else str(x))
             agg_f['Porcentaje'] = (agg_f['Tiempo (Min)'] / total_falla_maq) * 100
             
-            # Etiqueta combinada
             agg_f['Label'] = agg_f.apply(lambda r: f" {r['Nivel Evento 6']} — {r['Tiempo (Min)']:.0f} min ({r['Porcentaje']:.1f}%)", axis=1)
             
-            # Gráfico de barras usando el color complementario
             fig_top3 = px.bar(agg_f, x='Tiempo (Min)', y='Nivel Evento 6', orientation='h', text='Label')
             fig_top3.update_traces(
                 marker_color=hex_subtitle, 
@@ -643,10 +714,10 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
             )
             fig_top3.update_layout(
                 height=140, width=700,
-                margin=dict(t=5, b=5, l=10, r=400), # <-- MÁRGENES AJUSTADOS COMO EN LA OTRA VERSIÓN
+                margin=dict(t=5, b=5, l=10, r=400),
                 plot_bgcolor='rgba(0,0,0,0)', 
                 xaxis=dict(visible=False),
-                yaxis=dict(title='', autorange="reversed", showticklabels=False) # <-- OCULTA ETIQUETAS Y
+                yaxis=dict(title='', autorange="reversed", showticklabels=False)
             )
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart:
@@ -658,7 +729,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         if not df_maq_fallas.empty:
             check_space(pdf, 25)
             pdf.set_font("Arial", 'B', 9)
-            pdf.set_text_color(*subtitle_color) # <-- TEXTO UNIFICADO AL COLOR COMPLEMENTARIO
+            pdf.set_text_color(*subtitle_color)
             pdf.cell(0, 6, clean_text("> Detalle de fallas registradas:"), ln=True)
             dibujar_tabla_eventos_detallada(df_maq_fallas, 'Nivel Evento 6', mostrar_categoria=True)
             pdf.ln(2)
@@ -666,7 +737,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         if not df_maq_paradas.empty:
             check_space(pdf, 25)
             pdf.set_font("Arial", 'B', 9)
-            pdf.set_text_color(*subtitle_color) # <-- TEXTO UNIFICADO AL COLOR COMPLEMENTARIO
+            pdf.set_text_color(*subtitle_color)
             pdf.cell(0, 6, clean_text("> Detalle de paradas programadas:"), ln=True)
             dibujar_tabla_eventos_detallada(df_maq_paradas, col_desc_parada, mostrar_categoria=False)
             pdf.ln(2)
@@ -674,7 +745,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
         if not df_maq_proyectos.empty:
             check_space(pdf, 25)
             pdf.set_font("Arial", 'B', 9)
-            pdf.set_text_color(*subtitle_color) # <-- TEXTO UNIFICADO AL COLOR COMPLEMENTARIO
+            pdf.set_text_color(*subtitle_color)
             pdf.cell(0, 6, clean_text("> Detalle de paradas por proyecto:"), ln=True)
             dibujar_tabla_eventos_detallada(df_maq_proyectos, col_desc_parada, mostrar_categoria=False)
             
@@ -690,7 +761,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # =========================================================
     if not df_pdf.empty:
         check_space(pdf, 75)
-        print_section_title(pdf, "4. Resumen General de Tiempos del Area", theme_color) # Vuelve al color base
+        print_section_title(pdf, "4. Resumen General de Tiempos del Area", theme_color)
         
         def categorizar_evento(row):
             evento = str(row.get('Evento', '')).upper()
@@ -753,7 +824,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # =========================================================
     if not df_prod_pdf.empty and 'Buenas' in df_prod_pdf.columns:
         check_space(pdf, 80)
-        print_section_title(pdf, "5. Produccion por Maquina", theme_color) # Vuelve al color base
+        print_section_title(pdf, "5. Produccion por Maquina", theme_color)
         prod_maq = df_prod_pdf.groupby('Máquina')[['Buenas', 'Retrabajo', 'Observadas']].sum().reset_index()
         fig_prod = px.bar(prod_maq, x='Máquina', y=['Buenas', 'Retrabajo', 'Observadas'], barmode='stack', color_discrete_sequence=chart_bars, text_auto=True)
         fig_prod.update_layout(width=800, height=350, margin=dict(t=40, b=100, l=40, r=40), plot_bgcolor='rgba(0,0,0,0)')
@@ -794,7 +865,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # 6. PERFORMANCE DE OPERARIOS 
     # =========================================================
     check_space(pdf, 60)
-    print_section_title(pdf, "6. Performance de Operarios y Maquinas", theme_color) # Vuelve al color base
+    print_section_title(pdf, "6. Performance de Operarios y Maquinas", theme_color)
     pdf.set_font("Arial", 'I', 10)
     pdf.set_text_color(100, 100, 100)
     pdf.cell(0, 6, clean_text("Cuadro de desempeno y maquinas operadas en el sector."), ln=True)
@@ -908,7 +979,7 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
     # =========================================================
     def agregar_tabla_tiempos_operarios(titulo, regex_keyword, numero_seccion):
         check_space(pdf, 30)
-        print_section_title(pdf, f"{numero_seccion}. {titulo}", theme_color) # Vuelve al color base
+        print_section_title(pdf, f"{numero_seccion}. {titulo}", theme_color)
 
         try:
             col_t = 'Nivel Evento 4' if 'Nivel Evento 4' in df_pdf.columns else 'Nivel Evento 3'
