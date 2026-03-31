@@ -889,4 +889,47 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
 
             dibujar_cabeza_t()
             setup_table_row(pdf); pdf.set_font("Arial", '', 9)
-            for _, r
+            for _, r in df_res.iterrows():
+                if pdf.get_y() > 270: 
+                    pdf.add_page(); dibujar_cabeza_t(); setup_table_row(pdf); pdf.set_font("Arial", '', 9)
+                pdf.cell(70, 5, " " + clean_text(r['Operador'])[:35], 'B')
+                pdf.cell(40, 5, f"{r['Minutos']:.1f}", 'B', 0, 'C')
+                pdf.cell(40, 5, str(int(r['Cantidad'])), 'B', 0, 'C')
+                pdf.cell(40, 5, f"{r['Promedio']:.1f}", 'B', 1, 'C')
+            pdf.ln(5)
+        else:
+            pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay registros de tiempo acumulado para este ítem en el período."), ln=True)
+
+    pdf.set_link(link_tiempos)
+    agregar_tabla_tiempos("Tiempo de Baño Acumulado", ["BAÑO", "BANO"])
+    agregar_tabla_tiempos("Tiempo de Refrigerio Acumulado", ["REFRIGERIO"])
+
+    temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    pdf.output(temp_pdf.name)
+    with open(temp_pdf.name, "rb") as f: pdf_bytes = f.read()
+    os.remove(temp_pdf.name)
+    return pdf_bytes
+
+# ==========================================
+# 6. BOTONES DE EXPORTACIÓN EN PANTALLA
+# ==========================================
+with col_p3:
+    st.write("**3. Generar y Descargar:**")
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        if st.button("Preparar Reporte ESTAMPADO", use_container_width=True):
+            with st.spinner("Construyendo documento PDF..."):
+                try:
+                    pdf_data = crear_pdf("Estampado", pdf_label, pdf_df_oee_target, pdf_df_op_target, pdf_ini, pdf_fin, pdf_tipo)
+                    st.download_button("Descargar PDF Estampado", data=pdf_data, file_name=f"Estampado_{file_label.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error generando PDF: {e}")
+                    
+    with col_btn2:
+        if st.button("Preparar Reporte SOLDADURA", use_container_width=True):
+            with st.spinner("Construyendo documento PDF..."):
+                try:
+                    pdf_data = crear_pdf("Soldadura", pdf_label, pdf_df_oee_target, pdf_df_op_target, pdf_ini, pdf_fin, pdf_tipo)
+                    st.download_button("Descargar PDF Soldadura", data=pdf_data, file_name=f"Soldadura_{file_label.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error generando PDF: {e}")
