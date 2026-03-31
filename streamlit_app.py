@@ -205,7 +205,8 @@ with col_p2:
     elif pdf_tipo == "Semanal":
         if not df_oee_sem.empty:
             col_sem = df_oee_sem.columns[0]
-            opciones_sem = [s for s in df_oee_sem[col_sem].unique() if s.strip() != "" and str(s).lower() != "nan"]
+            # CORRECCIÓN DE STR(s) PARA EVITAR ERROR DE FLOAT
+            opciones_sem = [s for s in df_oee_sem[col_sem].unique() if str(s).strip() != "" and str(s).lower() != "nan"]
             pdf_sem = st.selectbox("Semana para PDF:", opciones_sem, label_visibility="collapsed")
             
             pdf_df_oee_target = df_oee_sem[df_oee_sem[col_sem].astype(str) == str(pdf_sem)]
@@ -226,7 +227,8 @@ with col_p2:
     elif pdf_tipo == "Mensual":
         if not df_oee_men.empty:
             col_mes = df_oee_men.columns[0]
-            opciones_mes = [m for m in df_oee_men[col_mes].unique() if m.strip() != "" and str(m).lower() != "nan"]
+            # CORRECCIÓN DE STR(m) PARA EVITAR ERROR DE FLOAT
+            opciones_mes = [m for m in df_oee_men[col_mes].unique() if str(m).strip() != "" and str(m).lower() != "nan"]
             pdf_mes = st.selectbox("Mes para PDF:", opciones_mes, label_visibility="collapsed")
             
             pdf_df_oee_target = df_oee_men[df_oee_men[col_mes].astype(str) == str(pdf_mes)]
