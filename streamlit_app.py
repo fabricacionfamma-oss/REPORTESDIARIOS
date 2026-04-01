@@ -131,30 +131,37 @@ def load_data():
                 df['Estado_Global'] = df.apply(categorizar_estado, axis=1)
                 
                 def obtener_detalle(row):
-                    n3 = str(row.get('Nivel Evento 3', '')).strip()
-                    n4 = str(row.get('Nivel Evento 4', '')).strip()
-                    n5 = str(row.get('Nivel Evento 5', '')).strip()
-                    n6 = str(row.get('Nivel Evento 6', '')).strip()
-                    validos = [n for n in [n3, n4, n5, n6] if n and n.lower() not in ['none', 'nan', '']]
-                    return validos[-1] if validos else str(row.get('Evento', 'Sin detalle'))
+                    # El detalle final (amarillo) es siempre el nivel más profundo registrado.
+                    # Ampliamos el barrido hasta el Nivel Evento 8 para atrapar toda la casuística de la imagen.
+                    niveles = []
+                    for i in range(3, 9):
+                        val = str(row.get(f'Nivel Evento {i}', '')).strip()
+                        if val and val.lower() not in ['none', 'nan', '']:
+                            niveles.append(val)
+                    return niveles[-1] if niveles else str(row.get('Evento', 'Sin detalle'))
                     
                 df['Detalle_Final'] = df.apply(obtener_detalle, axis=1)
 
-                # CORRECCIÓN DE "FALLA ABIERTA" AL GRÁFICO DE TORTA
                 def clasificar_macro(row):
                     n3 = str(row.get('Nivel Evento 3', '')).strip().upper()
                     n4 = str(row.get('Nivel Evento 4', '')).strip().upper()
                     n5 = str(row.get('Nivel Evento 5', '')).strip().upper()
                     
-                    if 'GESTION' in n3 or 'GESTIÓN' in n3: return 'Gestión'
+                    if 'GESTION' in n3 or 'GESTIÓN' in n3: 
+                        return 'Gestión'
                     
+                    # Si el Evento es FALLA (Lo Azul)
                     if 'FALLA' in n3:
-                        # Si en Nivel 4 dice "FALLA ABIERTA", saltamos a Nivel 5
-                        if 'ABIERT' in n4 or n4 == 'FALLA' or n4 in ['NAN', 'NONE', '']:
+                        # Si en Nivel 4 dice "FALLA ABIERTA" o "MANTENIMIENTO", 
+                        # son rutas intermedias, por lo que la Categoría (Verde) está en el Nivel 5.
+                        if 'ABIERT' in n4 or 'MANTENIMIENTO' in n4 or n4 == 'FALLA' or n4 in ['NAN', 'NONE', '']:
                             if n5 not in ['NAN', 'NONE', '']:
-                                return n5.title()
+                                return n5.title() # Retorna Ej: "Tecnologia", "Dispositivo"
+                        
+                        # Si N4 es directamente la categoría (Ej: "DISPOSITIVO")
                         if n4 not in ['NAN', 'NONE', '']:
                             return n4.title()
+                            
                         return 'Falla General'
                         
                     return n3.title() if n3 not in ['NAN', 'NONE', ''] else 'Otros'
@@ -299,7 +306,6 @@ def check_space(pdf, required_height):
         pdf.add_page(); return True
     return False
 
-# CORRECCIÓN DE ESPACIADO VERTICAL EN SECCIONES
 def print_section_title(pdf, title, theme_color):
     pdf.ln(5); pdf.set_font("Times", 'B', 14); pdf.set_text_color(*theme_color)
     pdf.cell(0, 6, clean_text(title), ln=True)
