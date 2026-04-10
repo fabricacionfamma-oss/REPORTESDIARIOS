@@ -404,25 +404,6 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
     m_est = get_metrics_direct("ESTAMPADO", oee_target_df)
     m_sol = get_metrics_direct("SOLDADURA", oee_target_df)
 
-    y_boxes = pdf.get_y() + 5
-    def draw_oee_box(x, y, w, h, title, val):
-        pdf.set_xy(x, y)
-        pdf.set_font("Arial", 'B', 11)
-        pdf.set_fill_color(*theme_color)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(w, h/2, clean_text(title), border=1, align='C', fill=True, ln=2)
-        
-        pdf.set_fill_color(245, 245, 245)
-        set_pdf_color(pdf, val)
-        pdf.set_font("Arial", 'B', 18)
-        pdf.cell(w, h/2, f"{val*100:.1f}%", border=1, align='C', fill=True)
-
-    # Centrado perfecto de los 2 cuadros de OEE
-    draw_oee_box(40, y_boxes, 60, 20, "OEE ESTAMPADO", m_est['OEE'])
-    draw_oee_box(110, y_boxes, 60, 20, "OEE SOLDADURA", m_sol['OEE'])
-
-    pdf.set_y(y_boxes + 30)
-
     def draw_kpi_row(y, title, m):
         pdf.set_xy(10, y)
         pdf.set_font("Arial", 'B', 12)
@@ -451,11 +432,13 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
         
         return y_b + 25
 
+    # Dibujamos directamente los recuadros de ESTAMPADO y SOLDADURA
     y_curr = pdf.get_y() + 5
     y_curr = draw_kpi_row(y_curr, "INDICADORES: ESTAMPADO", m_est)
     y_curr += 8
     y_curr = draw_kpi_row(y_curr, "INDICADORES: SOLDADURA", m_sol)
 
+    # Gráfico Histórico de Barras
     if not df_trend.empty:
         pdf.set_y(y_curr + 10)
         pdf.set_font("Arial", 'B', 12); pdf.set_text_color(*theme_color)
@@ -463,34 +446,38 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
 
         df_t = df_trend.copy()
         
-        def map_planta(m):
-            m_up = str(m).upper()
-            if 'ESTAMPADO' in m_up: return 'ESTAMPADO'
-            if 'SOLDADURA' in m_up: return 'SOLDADURA'
-            return 'OTRO'
-        
-        col_maq = next((c for c in df_t.columns if c.lower() in ['máquina', 'maquina']), None)
+        # Filtro de filas para separar las de Estampado y Soldadura
+        col_maq = next((c for c in df_t.columns if c.lower() in ['máquina', 'maquina', 'línea', 'linea', 'celda', 'equipo']), None)
         if col_maq:
-            df_t['Planta'] = df_t[col_maq].apply(map_planta)
-            df_t = df_t[df_t['Planta'] != 'OTRO']
+            df_t['Planta_Original'] = df_t[col_maq].astype(str).str.upper()
+            df_t['Planta_Filtro'] = df_t['Planta_Original'].apply(lambda x: 'ESTAMPADO' if 'ESTAM' in x else ('SOLDADURA' if 'SOLD' in x else 'OTRO'))
+            df_t = df_t[df_t['Planta_Filtro'].isin(['ESTAMPADO', 'SOLDADURA'])]
             
-            cols_to_melt = []
-            for c in ['OEE', 'DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD']:
-                if c in df_t.columns: cols_to_melt.append(c)
+            # Buscar los nombres exactos de las columnas en FAMMA
+            map_cols = {}
+            for expected, keys in {'OEE': ['OEE'], 'DISP': ['DISPONIBILIDAD', 'DISP'], 'PERF': ['PERFORMANCE', 'PERF'], 'CAL': ['CALIDAD', 'CAL']}.items():
+                found_col = next((c for c in df_t.columns if any(k in c.upper() for k in keys)), None)
+                if found_col:
+                    map_cols[expected] = found_col
+            
+            if map_cols:
+                # Renombramos las columnas para estandarizarlas
+                df_t = df_t.rename(columns={v: k for k, v in map_cols.items()})
+                cols_to_melt = list(map_cols.keys())
                 
-            if cols_to_melt:
-                trend_melt = df_t.melt(id_vars=['Month', 'Planta'], value_vars=cols_to_melt, var_name='Indicador', value_name='Valor')
+                # Derretir el DataFrame para facilitar el graficado
+                trend_melt = df_t.melt(id_vars=['Month', 'Planta_Filtro'], value_vars=cols_to_melt, var_name='Indicador', value_name='Valor')
                 
+                trend_melt['Valor'] = pd.to_numeric(trend_melt['Valor'], errors='coerce').fillna(0)
                 if trend_melt['Valor'].max() <= 1.5 and trend_melt['Valor'].max() > 0:
                     trend_melt['Valor'] = trend_melt['Valor'] * 100
                     
                 meses_map_short = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
                 trend_melt['Mes_Nombre'] = trend_melt['Month'].map(meses_map_short)
-                trend_melt['Indicador'] = trend_melt['Indicador'].replace({'DISPONIBILIDAD': 'DISP', 'PERFORMANCE': 'PERF', 'CALIDAD': 'CAL'})
 
                 # Gráfico dividido en columnas para separar Estampado y Soldadura
                 fig_glob = px.bar(
-                    trend_melt, x='Mes_Nombre', y='Valor', color='Indicador', facet_col='Planta',
+                    trend_melt, x='Mes_Nombre', y='Valor', color='Indicador', facet_col='Planta_Filtro',
                     barmode='group', text_auto='.0f',
                     color_discrete_map={'OEE': '#2C3E50', 'DISP': '#2980B9', 'PERF': '#F39C12', 'CAL': '#27AE60'}
                 )
@@ -499,6 +486,8 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
                     yaxis_title='Porcentaje (%)', xaxis_title='',
                     plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                 )
+                # Remueve el prefijo "Planta_Filtro=" del título de las columnas del gráfico
+                fig_glob.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
                 fig_glob.update_yaxes(range=[0, 110])
 
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_glob:
