@@ -198,7 +198,7 @@ if df_raw.empty:
 # ==========================================
 # 3. INTERFAZ: CONFIGURACIÓN PERIODO
 # ==========================================
-col_p1, col_p2, col_p3 = st.columns([1, 1.2, 1.5])
+col_p1, col_p2, col_p3 = st.columns([1, 1.2, 1.8])
 
 with col_p1:
     st.write("**1. Tipo de Reporte:**")
@@ -390,7 +390,135 @@ def add_image_safe(pdf, img_path, w_mm, h_mm, center=True):
 
 
 # ==========================================
-# 5. MOTOR GENERADOR DEL PDF 
+# 5.A MOTOR GENERADOR: RESUMEN EJECUTIVO
+# ==========================================
+def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
+    theme_color = (44, 62, 80) # Color neutral para Global Planta
+    pdf = ReportePDF("GLOBAL PLANTA", fecha_str, theme_color)
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    
+    print_section_title(pdf, "RESUMEN EJECUTIVO: KPI POR PLANTA", theme_color)
+
+    # Extraer métricas directas de la hoja del mes seleccionado
+    m_est = get_metrics_direct("ESTAMPADO", oee_target_df)
+    m_sol = get_metrics_direct("SOLDADURA", oee_target_df)
+    m_glob = get_metrics_direct("GENERAL", oee_target_df)
+    if m_glob['OEE'] == 0: m_glob = get_metrics_direct("TOTAL", oee_target_df)
+    if m_glob['OEE'] == 0: m_glob = get_metrics_direct("GLOBAL", oee_target_df)
+    if m_glob['OEE'] == 0: # Promedio fallback si no hay fila global explícita
+        m_glob = {k: (m_est[k] + m_sol[k]) / 2.0 for k in m_est}
+
+    y_boxes = pdf.get_y() + 5
+    def draw_oee_box(x, y, w, h, title, val):
+        pdf.set_xy(x, y)
+        pdf.set_font("Arial", 'B', 11)
+        pdf.set_fill_color(*theme_color)
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(w, h/2, clean_text(title), border=1, align='C', fill=True, ln=2)
+        
+        pdf.set_fill_color(245, 245, 245)
+        set_pdf_color(pdf, val)
+        pdf.set_font("Arial", 'B', 18)
+        pdf.cell(w, h/2, f"{val*100:.1f}%", border=1, align='C', fill=True)
+
+    draw_oee_box(20, y_boxes, 50, 20, "OEE ESTAMPADO", m_est['OEE'])
+    draw_oee_box(80, y_boxes, 50, 20, "OEE SOLDADURA", m_sol['OEE'])
+    draw_oee_box(140, y_boxes, 50, 20, "OEE GLOBAL", m_glob['OEE'])
+
+    pdf.set_y(y_boxes + 30)
+
+    def draw_kpi_row(y, title, m):
+        pdf.set_xy(10, y)
+        pdf.set_font("Arial", 'B', 12)
+        pdf.set_text_color(*theme_color)
+        pdf.cell(0, 6, clean_text(title), ln=1)
+        y_b = pdf.get_y() + 2
+        
+        w = 42; spacing = 5; x_start = 13.5
+        
+        def draw_box(x, title_box, val):
+            pdf.set_xy(x, y_b)
+            pdf.set_font("Arial", 'B', 9)
+            pdf.set_fill_color(*theme_color)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(w, 8, clean_text(title_box), border=1, align='C', fill=True, ln=2)
+            
+            pdf.set_fill_color(245, 245, 245)
+            set_pdf_color(pdf, val)
+            pdf.set_font("Arial", 'B', 16)
+            pdf.cell(w, 12, f"{val*100:.1f}%", border=1, align='C', fill=True)
+        
+        draw_box(x_start, "OEE", m['OEE'])
+        draw_box(x_start + w + spacing, "DISPONIBILIDAD", m['DISP'])
+        draw_box(x_start + 2*(w + spacing), "PERFORMANCE", m['PERF'])
+        draw_box(x_start + 3*(w + spacing), "CALIDAD", m['CAL'])
+        
+        return y_b + 25
+
+    y_curr = pdf.get_y() + 5
+    y_curr = draw_kpi_row(y_curr, "INDICADORES: ESTAMPADO", m_est)
+    y_curr += 8
+    y_curr = draw_kpi_row(y_curr, "INDICADORES: SOLDADURA", m_sol)
+
+    if not df_trend.empty:
+        pdf.set_y(y_curr + 10)
+        pdf.set_font("Arial", 'B', 12); pdf.set_text_color(*theme_color)
+        pdf.cell(0, 6, clean_text("Evolución Mensual Histórica (4 Indicadores por Planta)"), ln=True)
+
+        df_t = df_trend.copy()
+        
+        def map_planta(m):
+            m_up = str(m).upper()
+            if 'ESTAMPADO' in m_up: return 'ESTAMPADO'
+            if 'SOLDADURA' in m_up: return 'SOLDADURA'
+            return 'OTRO'
+        
+        col_maq = next((c for c in df_t.columns if c.lower() in ['máquina', 'maquina']), None)
+        if col_maq:
+            df_t['Planta'] = df_t[col_maq].apply(map_planta)
+            df_t = df_t[df_t['Planta'] != 'OTRO']
+            
+            cols_to_melt = []
+            for c in ['OEE', 'DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD']:
+                if c in df_t.columns: cols_to_melt.append(c)
+                
+            if cols_to_melt:
+                trend_melt = df_t.melt(id_vars=['Month', 'Planta'], value_vars=cols_to_melt, var_name='Indicador', value_name='Valor')
+                
+                if trend_melt['Valor'].max() <= 1.5 and trend_melt['Valor'].max() > 0:
+                    trend_melt['Valor'] = trend_melt['Valor'] * 100
+                    
+                meses_map_short = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
+                trend_melt['Mes_Nombre'] = trend_melt['Month'].map(meses_map_short)
+                trend_melt['Indicador'] = trend_melt['Indicador'].replace({'DISPONIBILIDAD': 'DISP', 'PERFORMANCE': 'PERF', 'CALIDAD': 'CAL'})
+
+                fig_glob = px.bar(
+                    trend_melt, x='Mes_Nombre', y='Valor', color='Indicador', facet_row='Planta',
+                    barmode='group', text_auto='.0f',
+                    color_discrete_map={'OEE': '#2C3E50', 'DISP': '#2980B9', 'PERF': '#F39C12', 'CAL': '#27AE60'}
+                )
+                fig_glob.update_layout(
+                    height=450, width=800, margin=dict(t=30, b=20, l=20, r=20),
+                    yaxis_title='Porcentaje (%)', xaxis_title='',
+                    plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                fig_glob.update_yaxes(range=[0, 110])
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_glob:
+                    fig_glob.write_image(tmp_glob.name, engine="kaleido")
+                    add_image_safe(pdf, tmp_glob.name, w_mm=190, h_mm=115, center=True)
+                    os.remove(tmp_glob.name)
+
+    temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    pdf.output(temp_pdf.name)
+    with open(temp_pdf.name, "rb") as f: pdf_bytes = f.read()
+    os.remove(temp_pdf.name)
+    return pdf_bytes
+
+
+# ==========================================
+# 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL
 # ==========================================
 def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_date, p_tipo, df_pdf_raw, df_prod_pdf_raw, df_trend):
     if area.upper() == "ESTAMPADO":
@@ -1005,21 +1133,36 @@ def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_da
 # ==========================================
 with col_p3:
     st.write("**3. Generar y Descargar:**")
-    col_btn1, col_btn2 = st.columns(2)
+    
+    if pdf_tipo == "Mensual":
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
+    else:
+        col_btn1, col_btn2 = st.columns(2)
+        
     with col_btn1:
-        if st.button("Preparar Reporte ESTAMPADO", use_container_width=True):
+        if st.button("Reporte ESTAMPADO", use_container_width=True):
             with st.spinner("Construyendo documento PDF..."):
                 try:
                     pdf_data = crear_pdf("Estampado", pdf_label, pdf_df_oee_target, pdf_df_op_target, pdf_ini, pdf_fin, pdf_tipo, df_pdf_raw_f, df_prod_target_f, df_trend_f)
-                    st.download_button("Descargar PDF Estampado", data=pdf_data, file_name=f"Estampado_{file_label.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
+                    st.download_button("Descargar Estampado", data=pdf_data, file_name=f"Estampado_{file_label.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
                     st.error(f"Error generando PDF: {e}")
                     
     with col_btn2:
-        if st.button("Preparar Reporte SOLDADURA", use_container_width=True):
+        if st.button("Reporte SOLDADURA", use_container_width=True):
             with st.spinner("Construyendo documento PDF..."):
                 try:
                     pdf_data = crear_pdf("Soldadura", pdf_label, pdf_df_oee_target, pdf_df_op_target, pdf_ini, pdf_fin, pdf_tipo, df_pdf_raw_f, df_prod_target_f, df_trend_f)
-                    st.download_button("Descargar PDF Soldadura", data=pdf_data, file_name=f"Soldadura_{file_label.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
+                    st.download_button("Descargar Soldadura", data=pdf_data, file_name=f"Soldadura_{file_label.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
                     st.error(f"Error generando PDF: {e}")
+                    
+    if pdf_tipo == "Mensual":
+        with col_btn3:
+            if st.button("Resumen Ejecutivo", use_container_width=True):
+                with st.spinner("Generando Resumen Ejecutivo Global..."):
+                    try:
+                        pdf_resumen = crear_pdf_resumen_ejecutivo_famma(pdf_label, pdf_df_oee_target, df_trend_f)
+                        st.download_button("Descargar Resumen", data=pdf_resumen, file_name=f"Resumen_Global_Planta_{file_label.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error generando PDF: {e}")
