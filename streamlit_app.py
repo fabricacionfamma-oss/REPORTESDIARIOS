@@ -93,13 +93,15 @@ def load_data():
             except Exception: return pd.DataFrame()
             
             # Máquina
-            col_maq = next((c for c in df.columns if c.lower() in ['máquina', 'maquina', 'línea', 'linea', 'celda', 'equipo']), None)
+            col_maq = next((c for c in df.columns if c.lower() in ['máquina', 'maquina', 'línea', 'linea', 'celda', 'equipo', 'planta', 'area', 'área']), None)
             if col_maq and col_maq != 'Máquina': df.rename(columns={col_maq: 'Máquina'}, inplace=True)
             if 'Máquina' not in df.columns and len(df.columns) > 0: df['Máquina'] = 'General'
             
             # Fábrica simulada para Fumiscor PDF engine
             def get_fabrica(maq):
                 m = str(maq).upper().strip()
+                if 'ESTAM' in m: return "Estampado"
+                if 'SOLD' in m: return "Soldadura"
                 if MAQUINAS_MAP.get(m, "") in GRUPOS_ESTAMPADO or 'LINEA' in m: return "Estampado"
                 return "Soldadura"
             if 'Máquina' in df.columns: df['Fábrica'] = df['Máquina'].apply(get_fabrica)
@@ -209,8 +211,6 @@ pdf_df_oee_target = pd.DataFrame()
 pdf_df_op_target = pd.DataFrame()
 pdf_label, file_label = "", ""
 
-meses_map_inv = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
-meses_map = {v: k for k, v in meses_map_inv.items()}
 meses_map_full = {"Enero": 1, "Febrero": 2, "Marzo": 3, "Abril": 4, "Mayo": 5, "Junio": 6, "Julio": 7, "Agosto": 8, "Septiembre": 9, "Octubre": 10, "Noviembre": 11, "Diciembre": 12}
 
 with col_p2:
@@ -255,7 +255,8 @@ with col_p2:
             opciones_mes = [m for m in df_oee_men[col_mes].unique() if str(m).strip() != "" and str(m).lower() != "nan"]
             pdf_mes = st.selectbox("Mes para PDF:", opciones_mes, label_visibility="collapsed")
             pdf_df_oee_target = df_oee_men[df_oee_men[col_mes].astype(str) == str(pdf_mes)]
-            pdf_mes_num = meses_map_full.get(str(pdf_mes).strip(), 1)
+            
+            pdf_mes_num = meses_map_full.get(str(pdf_mes).strip().title(), 1)
             
             col_mes_op = df_op_men_raw.columns[0] if not df_op_men_raw.empty else None
             if col_mes_op: pdf_df_op_target = df_op_men_raw[df_op_men_raw[col_mes_op].astype(str) == str(pdf_mes)]
@@ -271,12 +272,19 @@ with col_p2:
         else:
             st.warning("No hay datos mensuales.")
 
-# Generación de variables Fumiscor dependientes
+# Generación de variables dependientes con FILTRO MEJORADO para los meses (Sin importar Mayúsculas)
 df_trend_f = pd.DataFrame()
 if pdf_tipo == "Mensual" and not df_oee_men.empty and pdf_mes_num is not None:
     df_trend_f = df_oee_men.copy()
-    col_mes = df_trend_f.columns[0]
-    df_trend_f['Month'] = df_trend_f[col_mes].map(meses_map_full)
+    col_mes = next((c for c in df_trend_f.columns if 'mes' in c.lower()), df_trend_f.columns[0])
+    
+    def get_month_num(m_str):
+        m_str = str(m_str).strip().upper()
+        mapping = {"ENERO": 1, "FEBRERO": 2, "MARZO": 3, "ABRIL": 4, "MAYO": 5, "JUNIO": 6, "JULIO": 7, "AGOSTO": 8, "SEPTIEMBRE": 9, "OCTUBRE": 10, "NOVIEMBRE": 11, "DICIEMBRE": 12}
+        return mapping.get(m_str, None)
+        
+    df_trend_f['Month'] = df_trend_f[col_mes].apply(get_month_num)
+    df_trend_f = df_trend_f[df_trend_f['Month'].notna()]
     df_trend_f = df_trend_f[df_trend_f['Month'] <= pdf_mes_num]
 
 df_pdf_raw_f = pd.DataFrame()
@@ -432,13 +440,11 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
         
         return y_b + 25
 
-    # Dibujamos directamente los recuadros de ESTAMPADO y SOLDADURA
     y_curr = pdf.get_y() + 5
     y_curr = draw_kpi_row(y_curr, "INDICADORES: ESTAMPADO", m_est)
     y_curr += 8
     y_curr = draw_kpi_row(y_curr, "INDICADORES: SOLDADURA", m_sol)
 
-    # Gráfico Histórico de Barras
     if not df_trend.empty:
         pdf.set_y(y_curr + 10)
         pdf.set_font("Arial", 'B', 12); pdf.set_text_color(*theme_color)
@@ -446,14 +452,16 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
 
         df_t = df_trend.copy()
         
-        # Filtro de filas para separar las de Estampado y Soldadura
-        col_maq = next((c for c in df_t.columns if c.lower() in ['máquina', 'maquina', 'línea', 'linea', 'celda', 'equipo']), None)
+        # Filtrado de Planta buscando en la columna Máquina/Planta
+        col_maq = next((c for c in df_t.columns if c.lower() in ['máquina', 'maquina', 'planta', 'area', 'área']), None)
+        if not col_maq and 'Máquina' in df_t.columns: col_maq = 'Máquina'
+        
         if col_maq:
             df_t['Planta_Original'] = df_t[col_maq].astype(str).str.upper()
             df_t['Planta_Filtro'] = df_t['Planta_Original'].apply(lambda x: 'ESTAMPADO' if 'ESTAM' in x else ('SOLDADURA' if 'SOLD' in x else 'OTRO'))
             df_t = df_t[df_t['Planta_Filtro'].isin(['ESTAMPADO', 'SOLDADURA'])]
             
-            # Buscar los nombres exactos de las columnas en FAMMA
+            # Buscar los nombres exactos de las columnas de métricas en el DataFrame
             map_cols = {}
             for expected, keys in {'OEE': ['OEE'], 'DISP': ['DISPONIBILIDAD', 'DISP'], 'PERF': ['PERFORMANCE', 'PERF'], 'CAL': ['CALIDAD', 'CAL']}.items():
                 found_col = next((c for c in df_t.columns if any(k in c.upper() for k in keys)), None)
@@ -465,7 +473,7 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
                 df_t = df_t.rename(columns={v: k for k, v in map_cols.items()})
                 cols_to_melt = list(map_cols.keys())
                 
-                # Derretir el DataFrame para facilitar el graficado
+                # Transformamos la tabla para generar el gráfico
                 trend_melt = df_t.melt(id_vars=['Month', 'Planta_Filtro'], value_vars=cols_to_melt, var_name='Indicador', value_name='Valor')
                 
                 trend_melt['Valor'] = pd.to_numeric(trend_melt['Valor'], errors='coerce').fillna(0)
@@ -474,19 +482,22 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
                     
                 meses_map_short = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
                 trend_melt['Mes_Nombre'] = trend_melt['Month'].map(meses_map_short)
+                trend_melt = trend_melt.sort_values('Month')
 
-                # Gráfico dividido en columnas para separar Estampado y Soldadura
+                # Gráfico dividido en dos columnas (facet_col) para separar Estampado y Soldadura visualmente
                 fig_glob = px.bar(
                     trend_melt, x='Mes_Nombre', y='Valor', color='Indicador', facet_col='Planta_Filtro',
                     barmode='group', text_auto='.0f',
                     color_discrete_map={'OEE': '#2C3E50', 'DISP': '#2980B9', 'PERF': '#F39C12', 'CAL': '#27AE60'}
                 )
+                
                 fig_glob.update_layout(
                     height=450, width=800, margin=dict(t=30, b=20, l=20, r=20),
                     yaxis_title='Porcentaje (%)', xaxis_title='',
                     plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                 )
-                # Remueve el prefijo "Planta_Filtro=" del título de las columnas del gráfico
+                
+                # Quitar el prefijo "Planta_Filtro=" de los títulos de las subdivisiones
                 fig_glob.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
                 fig_glob.update_yaxes(range=[0, 110])
 
@@ -1145,9 +1156,9 @@ with col_p3:
     if pdf_tipo == "Mensual":
         with col_btn3:
             if st.button("Resumen Ejecutivo", use_container_width=True):
-                with st.spinner("Generando Resumen Ejecutivo Global..."):
+                with st.spinner("Generando Resumen Ejecutivo..."):
                     try:
                         pdf_resumen = crear_pdf_resumen_ejecutivo_famma(pdf_label, pdf_df_oee_target, df_trend_f)
-                        st.download_button("Descargar Resumen", data=pdf_resumen, file_name=f"Resumen_Global_Planta_{file_label.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
+                        st.download_button("Descargar Resumen", data=pdf_resumen, file_name=f"Resumen_Planta_{file_label.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
                     except Exception as e:
                         st.error(f"Error generando PDF: {e}")
