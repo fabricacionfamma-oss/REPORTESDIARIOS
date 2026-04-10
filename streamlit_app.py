@@ -394,7 +394,7 @@ def add_image_safe(pdf, img_path, w_mm, h_mm, center=True):
 # ==========================================
 def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
     theme_color = (44, 62, 80) # Color neutral para Global Planta
-    pdf = ReportePDF("GLOBAL PLANTA", fecha_str, theme_color)
+    pdf = ReportePDF("RESUMEN DE PLANTA", fecha_str, theme_color)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     
@@ -403,11 +403,6 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
     # Extraer métricas directas de la hoja del mes seleccionado
     m_est = get_metrics_direct("ESTAMPADO", oee_target_df)
     m_sol = get_metrics_direct("SOLDADURA", oee_target_df)
-    m_glob = get_metrics_direct("GENERAL", oee_target_df)
-    if m_glob['OEE'] == 0: m_glob = get_metrics_direct("TOTAL", oee_target_df)
-    if m_glob['OEE'] == 0: m_glob = get_metrics_direct("GLOBAL", oee_target_df)
-    if m_glob['OEE'] == 0: # Promedio fallback si no hay fila global explícita
-        m_glob = {k: (m_est[k] + m_sol[k]) / 2.0 for k in m_est}
 
     y_boxes = pdf.get_y() + 5
     def draw_oee_box(x, y, w, h, title, val):
@@ -422,9 +417,9 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
         pdf.set_font("Arial", 'B', 18)
         pdf.cell(w, h/2, f"{val*100:.1f}%", border=1, align='C', fill=True)
 
-    draw_oee_box(20, y_boxes, 50, 20, "OEE ESTAMPADO", m_est['OEE'])
-    draw_oee_box(80, y_boxes, 50, 20, "OEE SOLDADURA", m_sol['OEE'])
-    draw_oee_box(140, y_boxes, 50, 20, "OEE GLOBAL", m_glob['OEE'])
+    # Centrado perfecto de los 2 cuadros de OEE
+    draw_oee_box(40, y_boxes, 60, 20, "OEE ESTAMPADO", m_est['OEE'])
+    draw_oee_box(110, y_boxes, 60, 20, "OEE SOLDADURA", m_sol['OEE'])
 
     pdf.set_y(y_boxes + 30)
 
@@ -493,8 +488,9 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
                 trend_melt['Mes_Nombre'] = trend_melt['Month'].map(meses_map_short)
                 trend_melt['Indicador'] = trend_melt['Indicador'].replace({'DISPONIBILIDAD': 'DISP', 'PERFORMANCE': 'PERF', 'CALIDAD': 'CAL'})
 
+                # Gráfico dividido en columnas para separar Estampado y Soldadura
                 fig_glob = px.bar(
-                    trend_melt, x='Mes_Nombre', y='Valor', color='Indicador', facet_row='Planta',
+                    trend_melt, x='Mes_Nombre', y='Valor', color='Indicador', facet_col='Planta',
                     barmode='group', text_auto='.0f',
                     color_discrete_map={'OEE': '#2C3E50', 'DISP': '#2980B9', 'PERF': '#F39C12', 'CAL': '#27AE60'}
                 )
