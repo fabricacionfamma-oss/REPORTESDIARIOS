@@ -92,8 +92,8 @@ def load_data():
             try: df = pd.read_csv(url)
             except Exception: return pd.DataFrame()
             
-            # Máquina
-            col_maq = next((c for c in df.columns if c.lower() in ['máquina', 'maquina', 'línea', 'linea', 'celda', 'equipo', 'planta', 'area', 'área']), None)
+            # Máquina o Categoria
+            col_maq = next((c for c in df.columns if c.lower() in ['máquina', 'maquina', 'línea', 'linea', 'celda', 'equipo', 'planta', 'area', 'área', 'sector', 'categoria', 'categoría']), None)
             if col_maq and col_maq != 'Máquina': df.rename(columns={col_maq: 'Máquina'}, inplace=True)
             if 'Máquina' not in df.columns and len(df.columns) > 0: df['Máquina'] = 'General'
             
@@ -113,7 +113,7 @@ def load_data():
             if col_op_name and col_op_name != 'Operador': df.rename(columns={col_op_name: 'Operador'}, inplace=True)
 
             # Métricas
-            renames = {'Disponibilidad': 'DISPONIBILIDAD', 'Performance': 'PERFORMANCE', 'Calidad': 'CALIDAD', 'T Operativo': 'T_Operativo', 'T Parada': 'T_Parada'}
+            renames = {'Disponibilidad': 'DISPONIBILIDAD', 'Dispo': 'DISPONIBILIDAD', 'Performance': 'PERFORMANCE', 'Perfo': 'PERFORMANCE', 'Calidad': 'CALIDAD', 'T Operativo': 'T_Operativo', 'T Parada': 'T_Parada'}
             for old, new in renames.items():
                 match = next((col for col in df.columns if old.lower() in col.lower()), None)
                 if match: df.rename(columns={match: new}, inplace=True)
@@ -211,6 +211,8 @@ pdf_df_oee_target = pd.DataFrame()
 pdf_df_op_target = pd.DataFrame()
 pdf_label, file_label = "", ""
 
+meses_map_inv = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
+meses_map = {v: k for k, v in meses_map_inv.items()}
 meses_map_full = {"Enero": 1, "Febrero": 2, "Marzo": 3, "Abril": 4, "Mayo": 5, "Junio": 6, "Julio": 7, "Agosto": 8, "Septiembre": 9, "Octubre": 10, "Noviembre": 11, "Diciembre": 12}
 
 with col_p2:
@@ -272,7 +274,7 @@ with col_p2:
         else:
             st.warning("No hay datos mensuales.")
 
-# Generación de variables dependientes con FILTRO MEJORADO para los meses (Sin importar Mayúsculas)
+# Generación de variables dependientes con FILTRO MEJORADO
 df_trend_f = pd.DataFrame()
 if pdf_tipo == "Mensual" and not df_oee_men.empty and pdf_mes_num is not None:
     df_trend_f = df_oee_men.copy()
@@ -296,7 +298,6 @@ df_prod_target_f = pd.DataFrame()
 if pdf_ini is not None and pdf_fin is not None and not df_prod_raw.empty:
     mask_prod = (pd.to_datetime(df_prod_raw['Fecha_Filtro']).dt.date >= pdf_ini.date()) & (pd.to_datetime(df_prod_raw['Fecha_Filtro']).dt.date <= pdf_fin.date())
     df_prod_target_f = df_prod_raw[mask_prod]
-
 
 # ==========================================
 # 4. FUNCIONES HELPER PDF
@@ -365,7 +366,8 @@ def get_metrics_direct(name_filter, target_df):
     datos = target_df[mask.any(axis=1)]
     if not datos.empty:
         fila = datos.iloc[0] 
-        for key, col_search in {'OEE':['OEE'], 'DISP':['DISPONIBILIDAD', 'DISP'], 'PERF':['PERFORMANCE', 'PERFO'], 'CAL':['CALIDAD', 'CAL']}.items():
+        # BUSCADOR MEJORADO PARA DETECTAR PERFO, DISPO, CALIDAD y OEE
+        for key, col_search in {'OEE':['OEE'], 'DISP':['DISPONIBILIDAD', 'DISP'], 'PERF':['PERFORMANCE', 'PERF', 'PERFO'], 'CAL':['CALIDAD', 'CAL']}.items():
             actual_col = next((c for c in datos.columns if any(x in c.upper() for x in col_search)), None)
             if actual_col:
                 val_str = str(fila[actual_col]).replace('%', '').replace(',', '.').strip()
@@ -398,10 +400,10 @@ def add_image_safe(pdf, img_path, w_mm, h_mm, center=True):
 
 
 # ==========================================
-# 5.A MOTOR GENERADOR: RESUMEN EJECUTIVO
+# 5.A MOTOR GENERADOR: RESUMEN EJECUTIVO (MENSUAL)
 # ==========================================
 def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
-    theme_color = (44, 62, 80) # Color neutral para Global Planta
+    theme_color = (44, 62, 80) # Color neutral para Planta
     pdf = ReportePDF("RESUMEN DE PLANTA", fecha_str, theme_color)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
@@ -440,11 +442,13 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
         
         return y_b + 25
 
+    # Dibujamos las filas de KPI (Estampado y Soldadura)
     y_curr = pdf.get_y() + 5
     y_curr = draw_kpi_row(y_curr, "INDICADORES: ESTAMPADO", m_est)
     y_curr += 8
     y_curr = draw_kpi_row(y_curr, "INDICADORES: SOLDADURA", m_sol)
 
+    # Gráfico Histórico de Barras
     if not df_trend.empty:
         pdf.set_y(y_curr + 10)
         pdf.set_font("Arial", 'B', 12); pdf.set_text_color(*theme_color)
@@ -452,21 +456,19 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
 
         df_t = df_trend.copy()
         
-        # Filtrado de Planta buscando en la columna Máquina/Planta
-        col_maq = next((c for c in df_t.columns if c.lower() in ['máquina', 'maquina', 'planta', 'area', 'área']), None)
-        if not col_maq and 'Máquina' in df_t.columns: col_maq = 'Máquina'
+        # Filtro de Planta buscando en las columnas
+        col_maq = next((c for c in df_t.columns if c.lower() in ['máquina', 'maquina', 'planta', 'area', 'área', 'sector', 'categoria', 'categoría']), None)
         
         if col_maq:
             df_t['Planta_Original'] = df_t[col_maq].astype(str).str.upper()
             df_t['Planta_Filtro'] = df_t['Planta_Original'].apply(lambda x: 'ESTAMPADO' if 'ESTAM' in x else ('SOLDADURA' if 'SOLD' in x else 'OTRO'))
             df_t = df_t[df_t['Planta_Filtro'].isin(['ESTAMPADO', 'SOLDADURA'])]
             
-            # Buscar los nombres exactos de las columnas de métricas en el DataFrame
+            # Mapeo fuerte de columnas
             map_cols = {}
-            for expected, keys in {'OEE': ['OEE'], 'DISP': ['DISPONIBILIDAD', 'DISP'], 'PERF': ['PERFORMANCE', 'PERF'], 'CAL': ['CALIDAD', 'CAL']}.items():
+            for expected, keys in {'OEE': ['OEE'], 'DISP': ['DISPONIBILIDAD', 'DISP', 'DISPO'], 'PERF': ['PERFORMANCE', 'PERF', 'PERFO'], 'CAL': ['CALIDAD', 'CAL']}.items():
                 found_col = next((c for c in df_t.columns if any(k in c.upper() for k in keys)), None)
-                if found_col:
-                    map_cols[expected] = found_col
+                if found_col: map_cols[expected] = found_col
             
             if map_cols:
                 # Renombramos las columnas para estandarizarlas
@@ -476,7 +478,10 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
                 # Transformamos la tabla para generar el gráfico
                 trend_melt = df_t.melt(id_vars=['Month', 'Planta_Filtro'], value_vars=cols_to_melt, var_name='Indicador', value_name='Valor')
                 
+                # Limpieza de valores
+                trend_melt['Valor'] = trend_melt['Valor'].astype(str).str.replace('%', '').str.replace(',', '.')
                 trend_melt['Valor'] = pd.to_numeric(trend_melt['Valor'], errors='coerce').fillna(0)
+                
                 if trend_melt['Valor'].max() <= 1.5 and trend_melt['Valor'].max() > 0:
                     trend_melt['Valor'] = trend_melt['Valor'] * 100
                     
@@ -484,7 +489,7 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
                 trend_melt['Mes_Nombre'] = trend_melt['Month'].map(meses_map_short)
                 trend_melt = trend_melt.sort_values('Month')
 
-                # Gráfico dividido en dos columnas (facet_col) para separar Estampado y Soldadura visualmente
+                # Gráfico dividido en dos columnas (facet_col) para separar Estampado y Soldadura
                 fig_glob = px.bar(
                     trend_melt, x='Mes_Nombre', y='Valor', color='Indicador', facet_col='Planta_Filtro',
                     barmode='group', text_auto='.0f',
@@ -505,6 +510,10 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
                     fig_glob.write_image(tmp_glob.name, engine="kaleido")
                     add_image_safe(pdf, tmp_glob.name, w_mm=190, h_mm=115, center=True)
                     os.remove(tmp_glob.name)
+            else:
+                pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No se encontraron las columnas de OEE, DISP, PERF o CALIDAD en el histórico."), ln=True)
+        else:
+            pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No se encontró la columna SECTOR/CATEGORIA para separar el gráfico."), ln=True)
 
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     pdf.output(temp_pdf.name)
@@ -514,7 +523,7 @@ def crear_pdf_resumen_ejecutivo_famma(fecha_str, oee_target_df, df_trend):
 
 
 # ==========================================
-# 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL
+# 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL (ESTAMPADO/SOLDADURA)
 # ==========================================
 def crear_pdf(area, label_reporte, oee_target_df, op_target_df, ini_date, fin_date, p_tipo, df_pdf_raw, df_prod_pdf_raw, df_trend):
     if area.upper() == "ESTAMPADO":
@@ -1156,7 +1165,7 @@ with col_p3:
     if pdf_tipo == "Mensual":
         with col_btn3:
             if st.button("Resumen Ejecutivo", use_container_width=True):
-                with st.spinner("Generando Resumen Ejecutivo..."):
+                with st.spinner("Generando Resumen Ejecutivo Global..."):
                     try:
                         pdf_resumen = crear_pdf_resumen_ejecutivo_famma(pdf_label, pdf_df_oee_target, df_trend_f)
                         st.download_button("Descargar Resumen", data=pdf_resumen, file_name=f"Resumen_Planta_{file_label.replace(' ', '_')}.pdf", mime="application/pdf", use_container_width=True)
