@@ -11,6 +11,8 @@ from datetime import timedelta
 # ==========================================
 # 0. DICCIONARIO DE MÁQUINAS Y GRUPOS FAMMA
 # ==========================================
+# Este diccionario queda como respaldo para excepciones.
+# La asignación principal ahora es dinámica e inteligente.
 MAQUINAS_MAP = {
     "GENERAL": "LÍNEAS ESTAMPADO" 
 }
@@ -149,10 +151,15 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
         df_prod_target = conn.query(q_prod)
         df_metrics = conn.query(q_metrics)
 
+        # Consulta SQL expandida a 9 niveles
         q_event = f"""
             SELECT e.Id as Evento_Id, c.Name as Máquina, e.Started as Inicio, e.Finish as Fin, 
-                   e.Interval as [Tiempo (Min)], t1.Name as [Nivel Evento 1], t2.Name as [Nivel Evento 2], 
-                   t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4], t5.Name as [Nivel Evento 5],
+                   e.Interval as [Tiempo (Min)], 
+                   t1.Name as [Nivel Evento 1], t2.Name as [Nivel Evento 2], 
+                   t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4], 
+                   t5.Name as [Nivel Evento 5], t6.Name as [Nivel Evento 6],
+                   t7.Name as [Nivel Evento 7], t8.Name as [Nivel Evento 8],
+                   t9.Name as [Nivel Evento 9],
                    op.Name as Operador, e.Date as Fecha_Filtro, f.Name as Fábrica, tu.Name as Turno
             FROM EVENT_01 e
             LEFT JOIN CELL c ON e.CellId = c.CellId
@@ -161,6 +168,10 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             LEFT JOIN EVENTTYPE t3 ON e.EventTypeLevel3 = t3.EventTypeId
             LEFT JOIN EVENTTYPE t4 ON e.EventTypeLevel4 = t4.EventTypeId
             LEFT JOIN EVENTTYPE t5 ON e.EventTypeLevel5 = t5.EventTypeId
+            LEFT JOIN EVENTTYPE t6 ON e.EventTypeLevel6 = t6.EventTypeId
+            LEFT JOIN EVENTTYPE t7 ON e.EventTypeLevel7 = t7.EventTypeId
+            LEFT JOIN EVENTTYPE t8 ON e.EventTypeLevel8 = t8.EventTypeId
+            LEFT JOIN EVENTTYPE t9 ON e.EventTypeLevel9 = t9.EventTypeId
             LEFT JOIN FACTORY f ON e.FactoryId = f.FactoryId
             LEFT JOIN TURN tu ON e.TurnId = tu.TurnId
             LEFT JOIN EVENT_OPERATOR_01 eo ON e.Id = eo.EventId
@@ -174,11 +185,23 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             df_raw['Inicio_Str'] = pd.to_datetime(df_raw['Inicio']).dt.strftime('%H:%M')
             df_raw['Fin_Str'] = pd.to_datetime(df_raw['Fin']).dt.strftime('%H:%M')
             df_raw['Tiempo (Min)'] = pd.to_numeric(df_raw['Tiempo (Min)'], errors='coerce').fillna(0)
-            df_raw['Operador'] = df_raw['Operador'].fillna('-')
-
+            
+            # Limpiamos y priorizamos a los operadores reales sobre el 'usuario 1', 'usuario x', etc.
             cols_grupo = [c for c in df_raw.columns if c != 'Operador']
-            df_raw = df_raw.groupby(cols_grupo, dropna=False).agg({'Operador': lambda x: ' / '.join(x.unique())}).reset_index()
 
+            def obtener_operador_real(ops):
+                nombres = [str(x).strip() for x in ops.unique() if pd.notna(x) and str(x).strip() != '-']
+                # Filtramos las cuentas genéricas del sistema
+                reales = [n for n in nombres if 'usuario' not in n.lower()]
+                if reales:
+                    return ' / '.join(reales)
+                elif nombres:
+                    return nombres[-1] # Si solo hay cuenta genérica, tomamos la última
+                return '-'
+
+            df_raw = df_raw.groupby(cols_grupo, dropna=False).agg({'Operador': obtener_operador_real}).reset_index()
+
+            # Identificamos dinámicamente los niveles presentes (del 1 al 9)
             cols_niveles = [c for c in df_raw.columns if 'Nivel Evento' in c]
 
             def categorizar_estado(row):
@@ -192,20 +215,38 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             def clasificar_macro(row):
                 texto_completo = " ".join([str(row.get(c, '')) for c in cols_niveles]).upper()
                 categorias_clave = ["MANTENIMIENTO", "MATRICERIA", "DISPOSITIVOS", "TECNOLOGIA", "GESTION", "LOGISTICA", "CALIDAD"]
+                # Busca la palabra en AMARILLO
                 for cat in categorias_clave:
                     if cat in texto_completo:
                         return cat.capitalize()
                 return 'Otra Falla/Gestión'
 
-            def obtener_ultimo_nivel(row):
-                niveles = [str(row.get(c, '')).strip() for c in cols_niveles]
-                validos = [n for n in niveles if n.lower() not in ['none', 'nan', '', 'null']]
+            def obtener_detalle_final(row):
+                niveles = [str(row.get(c, '')) for c in cols_niveles]
+                # validos contendrá solo las celdas que tengan texto escrito
+                validos = [n.strip() for n in niveles if n.strip() and n.strip().lower() not in ['none', 'nan', 'null']]
+                
                 if not validos: return "Sin detalle en sistema"
+                
+                # Toma estrictamente el último dato válido a la derecha (Texto en ROJO)
+                ultimo_dato = validos[-1].upper()
+                
+                estado = row.get('Estado_Global', '')
+                categoria = row.get('Categoria_Macro', '')
+                
+                if estado == 'Falla/Gestión':
+                    # Si es falla y encontró una categoría clave, une ambas
+                    if categoria != 'Otra Falla/Gestión':
+                        return f"[{categoria.upper()}] {ultimo_dato}"
+                    return ultimo_dato
+                
+                # Para Paradas Programadas, SMED, etc., solo deja el último dato
                 return validos[-1]
 
+            # El orden es crucial para que detalle final pueda leer a los otros dos
             df_raw['Estado_Global'] = df_raw.apply(categorizar_estado, axis=1)
             df_raw['Categoria_Macro'] = df_raw.apply(clasificar_macro, axis=1)
-            df_raw['Detalle_Final'] = df_raw.apply(obtener_ultimo_nivel, axis=1)
+            df_raw['Detalle_Final'] = df_raw.apply(obtener_detalle_final, axis=1)
 
         return df_raw, df_prod_target, df_op_target, df_trend, df_metrics
 
@@ -499,7 +540,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             return 'EQUIPOS PRP'
         return 'Otro'
 
-    # Filtro Mejorado de Área
+    # Filtro Mejorado de Área (Revisa Fabrica y Nivel Evento 2)
     df_pdf = pd.DataFrame(columns=['Máquina', 'Fábrica', 'Estado_Global', 'Tiempo (Min)', 'Operador', 'Nivel Evento 2'])
     if not df_pdf_raw.empty:
         mask_area = (df_pdf_raw['Fábrica'].astype(str).str.contains(area, case=False, na=False)) | \
@@ -547,9 +588,9 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 pdf.cell(15, 6, "Fecha", 1, 0, 'C', True)
                 pdf.cell(12, 6, "Ini.", 1, 0, 'C', True)
                 pdf.cell(12, 6, "Fin", 1, 0, 'C', True)
-                pdf.cell(106, 6, "Detalle Registrado en Sistema", 1, 0, 'L', True)
+                pdf.cell(96, 6, "Detalle Registrado en Sistema", 1, 0, 'L', True)
                 pdf.cell(12, 6, "Min", 1, 0, 'C', True)
-                pdf.cell(33, 6, "Operador", 1, 1, 'L', True)
+                pdf.cell(43, 6, "Operador", 1, 1, 'L', True)
             
             dibujar_cabeceras(); setup_table_row(pdf); pdf.set_font("Arial", '', 8)
             df_subset['_sort_time'] = df_subset['Inicio_Str'].apply(lambda x: parse_time_to_mins(x) if pd.notna(x) else 9999)
@@ -561,15 +602,17 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 val_inicio = str(row['Inicio_Str'])[:5] if pd.notna(row['Inicio_Str']) else "-"
                 val_fin = str(row['Fin_Str'])[:5] if pd.notna(row['Fin_Str']) else "-"
                 minutos = f"{row['Tiempo (Min)']:.0f}"
-                operador = " " + str(row['Operador'])[:15]
+                
+                # Operador extendido y limpio
+                operador = " " + str(row['Operador'])[:25]
                 detalle_str = " " + str(row[col_detalle]) if col_detalle in row and pd.notna(row[col_detalle]) else " Sin detalle"
                 
                 pdf.cell(15, 5, val_fecha, 'B', 0, 'C')
                 pdf.cell(12, 5, val_inicio, 'B', 0, 'C')
                 pdf.cell(12, 5, val_fin, 'B', 0, 'C')
-                pdf.cell(106, 5, clean_text(detalle_str[:70]), 'B', 0, 'L')
+                pdf.cell(96, 5, clean_text(detalle_str[:60]), 'B', 0, 'L')
                 pdf.cell(12, 5, minutos, 'B', 0, 'C')
-                pdf.cell(33, 5, clean_text(operador), 'B', 1, 'L')
+                pdf.cell(43, 5, clean_text(operador), 'B', 1, 'L')
             pdf.ln(8)
 
     def obtener_metricas_maquina(maq_name):
@@ -903,7 +946,6 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         resumen_global = df_pdf_g.groupby('Estado_Global')['Tiempo (Min)'].sum().reset_index() if not df_pdf_g.empty else pd.DataFrame()
         total_global = resumen_global['Tiempo (Min)'].sum() if not resumen_global.empty else 0
 
-        # Eliminamos el pdf.add_page() forzado y usamos check_space para que fluya consecutivamente
         check_space(pdf, 90)
         
         if total_global > 0:
