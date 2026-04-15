@@ -1190,10 +1190,10 @@ with col_p3:
                         st.error(f"Error generando PDF: {e}")
 
 # ==========================================
-# MODO DETECTIVE: DESCUBRIR TABLAS Y COLUMNAS
+# MODO DETECTIVE 2.0: EL ESLABÓN PERDIDO
 # ==========================================
 st.divider()
-st.write("### 🔍 MODO DETECTIVE: Estructura de la Base de Datos")
+st.write("### 🔍 MODO DETECTIVE 2.0: Encontrando al Técnico")
 
 try:
     conn = st.connection("wii_bi", type="sql")
@@ -1201,14 +1201,18 @@ try:
     col1, col2 = st.columns(2)
     
     with col1:
-        st.write("**Todas las columnas que tiene la tabla EVENT_01:**")
-        df_cols = conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'EVENT_01'")
-        st.dataframe(df_cols)
+        st.write("**1. Tablas secretas conectadas al Evento:**")
+        # Le preguntamos a SQL qué tablas tienen la columna EventId
+        q_links = "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE COLUMN_NAME LIKE '%EventId%'"
+        df_links = conn.query(q_links)
+        st.dataframe(df_links)
         
     with col2:
-        st.write("**Tablas en el sistema que guardan Usuarios, Mantenimiento u Operadores:**")
-        df_tables = conn.query("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME LIKE '%USER%' OR TABLE_NAME LIKE '%OPER%' OR TABLE_NAME LIKE '%MANT%' OR TABLE_NAME LIKE '%TECH%' OR TABLE_NAME LIKE '%EMP%'")
-        st.dataframe(df_tables)
+        st.write("**2. Vistas (Reportes de Excel prearmados):**")
+        # Le preguntamos a SQL si existe una Vista que ya tenga tu Excel armado
+        q_views = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_NAME LIKE '%EVENT%'"
+        df_views = conn.query(q_views)
+        st.dataframe(df_views)
         
 except Exception as e:
     st.error(f"Error consultando el esquema: {e}")
