@@ -9,7 +9,7 @@ from fpdf import FPDF
 from datetime import timedelta
 
 # ==========================================
-# 0. DICCIONARIO DE MÁQUINAS Y GRUPOS FAMMA
+# 0. DICCIONARIO DE MÁQUINAS Y GRUPOS FUMISCOR
 # ==========================================
 # Este diccionario queda como respaldo para excepciones.
 # La asignación principal ahora es dinámica e inteligente.
@@ -151,7 +151,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
         df_prod_target = conn.query(q_prod)
         df_metrics = conn.query(q_metrics)
 
-        # Consulta SQL expandida a 9 niveles, extrayendo directamente el Operador del Evento (OperatorId)
+        # Consulta SQL expandida a 9 niveles, restaurando la tabla intermedia EVENT_OPERATOR_01
         q_event = f"""
             SELECT e.Id as Evento_Id, c.Name as Máquina, e.Started as Inicio, e.Finish as Fin, 
                    e.Interval as [Tiempo (Min)], 
@@ -174,7 +174,8 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             LEFT JOIN EVENTTYPE t9 ON e.EventTypeLevel9 = t9.EventTypeId
             LEFT JOIN FACTORY f ON e.FactoryId = f.FactoryId
             LEFT JOIN TURN tu ON e.TurnId = tu.TurnId
-            LEFT JOIN OPERATOR op ON e.OperatorId = op.OperatorId
+            LEFT JOIN EVENT_OPERATOR_01 eo ON e.Id = eo.EventId
+            LEFT JOIN OPERATOR op ON eo.OperatorId = op.OperatorId
             WHERE e.Date BETWEEN '{ini_str}' AND '{fin_str}'
         """
         df_raw = conn.query(q_event)
@@ -185,8 +186,30 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             df_raw['Fin_Str'] = pd.to_datetime(df_raw['Fin']).dt.strftime('%H:%M')
             df_raw['Tiempo (Min)'] = pd.to_numeric(df_raw['Tiempo (Min)'], errors='coerce').fillna(0)
             
-            # Limpiamos los valores nulos, el SQL ya nos da al operador exacto
-            df_raw['Operador'] = df_raw['Operador'].fillna('-').astype(str).str.strip()
+            # Limpiamos y priorizamos a los operadores reales sobre el 'usuario 1', 'usuario x', etc.
+            cols_grupo = [c for c in df_raw.columns if c != 'Operador']
+
+            def obtener_operador_real(ops):
+                nombres = []
+                for val in ops.dropna():
+                    # Separamos en caso de que SQL mande varios en un string
+                    for part in str(val).split('/'):
+                        p = part.strip()
+                        if p and p != '-':
+                            if p not in nombres:
+                                nombres.append(p)
+                
+                # Descartamos a cualquiera que tenga la palabra "usuario" en su nombre
+                reales = [n for n in nombres if 'usuario' not in n.lower()]
+                
+                if reales:
+                    return ' / '.join(reales)
+                elif nombres:
+                    return nombres[-1] # Solo si todos son genéricos, dejamos el último
+                return '-'
+
+            # Esto agrupa las filas duplicadas del SQL y deja solo al operador real
+            df_raw = df_raw.groupby(cols_grupo, dropna=False).agg({'Operador': obtener_operador_real}).reset_index()
 
             # Identificamos dinámicamente los niveles presentes (del 1 al 9)
             cols_niveles = [c for c in df_raw.columns if 'Nivel Evento' in c]
@@ -202,7 +225,6 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             def clasificar_macro(row):
                 texto_completo = " ".join([str(row.get(c, '')) for c in cols_niveles]).upper()
                 categorias_clave = ["MANTENIMIENTO", "MATRICERIA", "DISPOSITIVOS", "TECNOLOGIA", "GESTION", "LOGISTICA", "CALIDAD"]
-                # Busca la palabra en AMARILLO
                 for cat in categorias_clave:
                     if cat in texto_completo:
                         return cat.capitalize()
@@ -210,24 +232,19 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
 
             def obtener_detalle_final(row):
                 niveles = [str(row.get(c, '')) for c in cols_niveles]
-                # validos contendrá solo las celdas que tengan texto escrito
                 validos = [n.strip() for n in niveles if n.strip() and n.strip().lower() not in ['none', 'nan', 'null']]
                 
                 if not validos: return "Sin detalle en sistema"
                 
-                # Toma estrictamente el último dato válido a la derecha (Texto en ROJO)
                 ultimo_dato = validos[-1].upper()
-                
                 estado = row.get('Estado_Global', '')
                 categoria = row.get('Categoria_Macro', '')
                 
                 if estado == 'Falla/Gestión':
-                    # Si es falla y encontró una categoría clave, une ambas
                     if categoria != 'Otra Falla/Gestión':
                         return f"[{categoria.upper()}] {ultimo_dato}"
                     return ultimo_dato
                 
-                # Para Paradas Programadas, SMED, etc., solo deja el último dato
                 return validos[-1]
 
             # El orden es crucial para que detalle final pueda leer a los otros dos
@@ -586,7 +603,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 val_fin = str(row['Fin_Str'])[:5] if pd.notna(row['Fin_Str']) else "-"
                 minutos = f"{row['Tiempo (Min)']:.0f}"
                 
-                # Le damos suficiente espacio para que entren nombres y apellidos completos
+                # Le damos hasta 35 caracteres para que entren bien nombres y apellidos reales
                 operador = " " + str(row['Operador'])[:35]
                 detalle_str = " " + str(row[col_detalle]) if col_detalle in row and pd.notna(row[col_detalle]) else " Sin detalle"
                 
