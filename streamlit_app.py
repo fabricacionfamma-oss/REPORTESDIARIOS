@@ -1188,3 +1188,27 @@ with col_p3:
                         st.download_button("Descargar Resumen", data=pdf_resumen, file_name=f"FAMMA_Resumen_Planta_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                     except Exception as e:
                         st.error(f"Error generando PDF: {e}")
+
+# ==========================================
+# MODO DETECTIVE: DESCUBRIR TABLAS Y COLUMNAS
+# ==========================================
+st.divider()
+st.write("### 🔍 MODO DETECTIVE: Estructura de la Base de Datos")
+
+try:
+    conn = st.connection("wii_bi", type="sql")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**Todas las columnas que tiene la tabla EVENT_01:**")
+        df_cols = conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'EVENT_01'")
+        st.dataframe(df_cols)
+        
+    with col2:
+        st.write("**Tablas en el sistema que guardan Usuarios, Mantenimiento u Operadores:**")
+        df_tables = conn.query("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME LIKE '%USER%' OR TABLE_NAME LIKE '%OPER%' OR TABLE_NAME LIKE '%MANT%' OR TABLE_NAME LIKE '%TECH%' OR TABLE_NAME LIKE '%EMP%'")
+        st.dataframe(df_tables)
+        
+except Exception as e:
+    st.error(f"Error consultando el esquema: {e}")
