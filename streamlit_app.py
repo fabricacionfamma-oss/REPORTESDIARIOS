@@ -11,25 +11,9 @@ from datetime import timedelta
 # ==========================================
 # 0. DICCIONARIO DE MÁQUINAS Y GRUPOS FAMMA
 # ==========================================
+# Este diccionario queda como respaldo para excepciones, 
+# pero el código ahora usa una asignación inteligente.
 MAQUINAS_MAP = {
-    # ESTAMPADO
-    "LINEA 1.5": "LÍNEAS ESTAMPADO", 
-    "LINEA 2": "LÍNEAS ESTAMPADO", 
-    "LINEA 3": "LÍNEAS ESTAMPADO", 
-    "LINEA 4": "LÍNEAS ESTAMPADO",
-    
-    # SOLDADURA
-    "CELL 13 FAMMA": "CELDAS SOLDADURA",
-    "CELL 14 FAMMA": "CELDAS SOLDADURA",
-    "CELL 15A FAMMA": "CELDAS SOLDADURA",
-    "CELL 15B FAMMA": "CELDAS SOLDADURA",
-    "CELL 16 FAMMA": "CELDAS SOLDADURA",
-    "CELL 17 FAMMA": "CELDAS SOLDADURA",
-    "CELL 3 FAMMA": "CELDAS SOLDADURA",
-    "PRP 1": "EQUIPOS PRP",
-    "PRP 2": "EQUIPOS PRP",
-    "PRP 3": "EQUIPOS PRP",
-    
     "GENERAL": "LÍNEAS ESTAMPADO" 
 }
 
@@ -167,17 +151,19 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
         df_prod_target = conn.query(q_prod)
         df_metrics = conn.query(q_metrics)
 
+        # Extendemos la consulta hasta el Nivel 5 por seguridad
         q_event = f"""
             SELECT e.Id as Evento_Id, c.Name as Máquina, e.Started as Inicio, e.Finish as Fin, 
                    e.Interval as [Tiempo (Min)], t1.Name as [Nivel Evento 1], t2.Name as [Nivel Evento 2], 
-                   t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4], op.Name as Operador, 
-                   e.Date as Fecha_Filtro, f.Name as Fábrica, tu.Name as Turno
+                   t3.Name as [Nivel Evento 3], t4.Name as [Nivel Evento 4], t5.Name as [Nivel Evento 5],
+                   op.Name as Operador, e.Date as Fecha_Filtro, f.Name as Fábrica, tu.Name as Turno
             FROM EVENT_01 e
             LEFT JOIN CELL c ON e.CellId = c.CellId
             LEFT JOIN EVENTTYPE t1 ON e.EventTypeLevel1 = t1.EventTypeId
             LEFT JOIN EVENTTYPE t2 ON e.EventTypeLevel2 = t2.EventTypeId
             LEFT JOIN EVENTTYPE t3 ON e.EventTypeLevel3 = t3.EventTypeId
             LEFT JOIN EVENTTYPE t4 ON e.EventTypeLevel4 = t4.EventTypeId
+            LEFT JOIN EVENTTYPE t5 ON e.EventTypeLevel5 = t5.EventTypeId
             LEFT JOIN FACTORY f ON e.FactoryId = f.FactoryId
             LEFT JOIN TURN tu ON e.TurnId = tu.TurnId
             LEFT JOIN EVENT_OPERATOR_01 eo ON e.Id = eo.EventId
@@ -196,8 +182,11 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             cols_grupo = [c for c in df_raw.columns if c != 'Operador']
             df_raw = df_raw.groupby(cols_grupo, dropna=False).agg({'Operador': lambda x: ' / '.join(x.unique())}).reset_index()
 
+            # Identificamos dinámicamente los niveles presentes
+            cols_niveles = [c for c in df_raw.columns if 'Nivel Evento' in c]
+
             def categorizar_estado(row):
-                texto_completo = f"{row.get('Nivel Evento 1','')} {row.get('Nivel Evento 2','')} {row.get('Nivel Evento 3','')} {row.get('Nivel Evento 4','')} ".upper()
+                texto_completo = " ".join([str(row.get(c, '')) for c in cols_niveles]).upper()
                 if 'PRODUCCION' in texto_completo or 'PRODUCCIÓN' in texto_completo: return 'Producción'
                 if 'PROYECTO' in texto_completo: return 'Proyecto'
                 if 'BAÑO' in texto_completo or 'BANO' in texto_completo or 'REFRIGERIO' in texto_completo: return 'Descanso'
@@ -205,24 +194,21 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
                 return 'Falla/Gestión'
 
             def clasificar_macro(row):
-                n1 = str(row.get('Nivel Evento 1', '')).strip().upper()
-                n2 = str(row.get('Nivel Evento 2', '')).strip().upper()
-                if 'GESTION' in n1 or 'GESTIÓN' in n1: return 'Gestión'
-                if 'FALLA' in n1: return n2.title() if n2 not in ['NAN', 'NONE', ''] else 'Falla (Sin área)'
-                return n1.title() if n1 not in ['NAN', 'NONE', ''] else 'Sin Clasificar'
+                texto_completo = " ".join([str(row.get(c, '')) for c in cols_niveles]).upper()
+                categorias_clave = ["MANTENIMIENTO", "MATRICERIA", "DISPOSITIVOS", "TECNOLOGIA", "GESTION", "LOGISTICA", "CALIDAD"]
+                for cat in categorias_clave:
+                    if cat in texto_completo:
+                        return cat.capitalize()
+                return 'Otra Falla/Gestión'
+
+            def obtener_ultimo_nivel(row):
+                niveles = [str(row.get(c, '')).strip() for c in cols_niveles]
+                validos = [n for n in niveles if n.lower() not in ['none', 'nan', '', 'null']]
+                if not validos: return "Sin detalle en sistema"
+                return validos[-1]
 
             df_raw['Estado_Global'] = df_raw.apply(categorizar_estado, axis=1)
             df_raw['Categoria_Macro'] = df_raw.apply(clasificar_macro, axis=1)
-
-            def obtener_ultimo_nivel(row):
-                niveles = [str(row.get(col, '')).strip() for col in ['Nivel Evento 1', 'Nivel Evento 2', 'Nivel Evento 3', 'Nivel Evento 4']]
-                validos = [n for n in niveles if n.lower() not in ['none', 'nan', '', 'null']]
-                if not validos: return "Sin detalle en sistema"
-                ultimo = validos[-1]; macro = row['Categoria_Macro']
-                if row['Estado_Global'] == 'Falla/Gestión':
-                    if macro.upper() not in ultimo.upper(): return f"[{macro}] {ultimo}"
-                return ultimo
-
             df_raw['Detalle_Final'] = df_raw.apply(obtener_ultimo_nivel, axis=1)
 
         return df_raw, df_prod_target, df_op_target, df_trend, df_metrics
@@ -366,12 +352,13 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
     
     print_section_title(pdf, "RESUMEN EJECUTIVO: KPI POR PLANTA", theme_color)
 
-    mapa_limpio = {str(k).strip().upper(): v for k, v in MAQUINAS_MAP.items()}
+    # Lógica Dinámica de Planta
     def get_planta(maq_name):
         maq_upper = str(maq_name).strip().upper()
-        grupo = mapa_limpio.get(maq_upper, 'OTRO')
-        if grupo in GRUPOS_ESTAMPADO: return 'ESTAMPADO'
-        if grupo in GRUPOS_SOLDADURA: return 'SOLDADURA'
+        if 'CELL' in maq_upper or 'CELDA' in maq_upper or 'PRP' in maq_upper or 'SOLD' in maq_upper:
+            return 'SOLDADURA'
+        if 'LINEA' in maq_upper or 'LÍNEA' in maq_upper:
+            return 'ESTAMPADO'
         return 'OTRO'
 
     df_met_all = df_metrics_pdf.copy()
@@ -412,7 +399,6 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
         pdf.set_text_color(*theme_color)
         pdf.cell(0, 6, clean_text(title), ln=1)
         y_boxes = pdf.get_y() + 2
-        
         w = 42; spacing = 5; x_start = 13.5
         
         def draw_box(x, title_box, val):
@@ -496,7 +482,6 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         grupos_area = GRUPOS_SOLDADURA
         
     hex_theme = '#%02x%02x%02x' % theme_color; hex_comp = '#%02x%02x%02x' % comp_color  
-    mapa_limpio = {str(k).strip().upper(): v for k, v in MAQUINAS_MAP.items()}
 
     if not df_metrics_pdf.empty and df_metrics_pdf['OEE'].max() > 1.5:
         df_metrics_pdf['OEE'] = df_metrics_pdf['OEE'] / 100.0
@@ -504,15 +489,36 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         df_metrics_pdf['PERFORMANCE'] = df_metrics_pdf['PERFORMANCE'] / 100.0
         df_metrics_pdf['CALIDAD'] = df_metrics_pdf['CALIDAD'] / 100.0
 
-    df_pdf = pd.DataFrame(columns=['Máquina', 'Fábrica', 'Estado_Global', 'Tiempo (Min)', 'Operador'])
+    # Lógica Dinámica a prueba de futuro
+    def asignar_grupo_dinamico(maq):
+        maq_u = str(maq).strip().upper()
+        if maq_u in MAQUINAS_MAP:
+            return MAQUINAS_MAP[maq_u]
+            
+        if 'CELL' in maq_u or 'CELDA' in maq_u:
+            return 'CELDAS SOLDADURA'
+        if 'LINEA' in maq_u or 'LÍNEA' in maq_u:
+            return 'LÍNEAS ESTAMPADO'
+        if 'PRP' in maq_u or 'SOLD' in maq_u:
+            return 'EQUIPOS PRP'
+        return 'Otro'
+
+    # Filtro Mejorado de Área
+    df_pdf = pd.DataFrame(columns=['Máquina', 'Fábrica', 'Estado_Global', 'Tiempo (Min)', 'Operador', 'Nivel Evento 2'])
     if not df_pdf_raw.empty:
-        df_pdf = df_pdf_raw[df_pdf_raw['Fábrica'].astype(str).str.contains(area, case=False, na=False)].copy()
-    df_pdf['Grupo_Máquina'] = df_pdf['Máquina'].astype(str).str.strip().str.upper().map(mapa_limpio).fillna('Otro')
+        mask_area = (df_pdf_raw['Fábrica'].astype(str).str.contains(area, case=False, na=False)) | \
+                    (df_pdf_raw.get('Nivel Evento 2', pd.Series(dtype=str)).astype(str).str.contains(area, case=False, na=False))
+        df_pdf = df_pdf_raw[mask_area].copy()
+    
+    df_pdf['Máquina_Match'] = df_pdf['Máquina'].astype(str).str.strip().str.upper()
+    df_pdf['Grupo_Máquina'] = df_pdf['Máquina_Match'].apply(asignar_grupo_dinamico)
 
     df_prod_pdf = pd.DataFrame(columns=['Máquina', 'Buenas', 'Retrabajo', 'Observadas'])
     if not prod_target_df.empty:
         df_prod_pdf = prod_target_df.copy()
-    df_prod_pdf['Grupo_Máquina'] = df_prod_pdf['Máquina'].astype(str).str.strip().str.upper().map(mapa_limpio).fillna('Otro')
+    
+    df_prod_pdf['Máquina_Match'] = df_prod_pdf['Máquina'].astype(str).str.strip().str.upper()
+    df_prod_pdf['Grupo_Máquina'] = df_prod_pdf['Máquina_Match'].apply(asignar_grupo_dinamico)
 
     pdf = ReportePDF(area, label_reporte, theme_color)
     pdf.set_auto_page_break(auto=True, margin=15); pdf.add_page()
@@ -529,9 +535,9 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         pdf.cell(0, 8, clean_text(f"> Reporte detallado de Grupo: {g}"), ln=True, link=links_grupos[g])
     pdf.ln(5)
     pdf.cell(0, 8, clean_text("> Performance General de Operarios"), ln=True, link=link_perfo)
-    pdf.cell(0, 8, clean_text("> Tablas de Tiempos Acumulados de Baño y Refrigerio"), ln=True, link=link_tiempos)
+    pdf.cell(0, 8, clean_text("> Tablas de Tiempos Acumulados de Descanso"), ln=True, link=link_tiempos)
 
-    if df_pdf.empty:
+    if df_pdf.empty and df_prod_pdf.empty:
         pdf.add_page(); pdf.set_font("Arial", 'I', 12); pdf.set_text_color(100)
         pdf.cell(0, 10, f"No hay datos registrados para la fabrica {area} en este periodo.", ln=True)
         return pdf.output(dest='S').encode('latin-1')
@@ -585,9 +591,13 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
 
     # RECORRIDO POR CADA GRUPO 
     for g in grupos_area:
-        maq_del_grupo = [m for m, grp in MAQUINAS_MAP.items() if grp == g]
+        maq_ev = df_pdf[df_pdf['Grupo_Máquina'] == g]['Máquina'].unique().tolist()
+        maq_pr = df_prod_pdf[df_prod_pdf['Grupo_Máquina'] == g]['Máquina'].unique().tolist()
+        maq_del_grupo = sorted(list(set(maq_ev + maq_pr)))
+        
         df_pdf_g = df_pdf[df_pdf['Máquina'].isin(maq_del_grupo)]
-        if df_pdf_g.empty: continue
+        if df_pdf_g.empty and not any(m in df_prod_pdf['Máquina'].values for m in maq_del_grupo):
+            continue
             
         pdf.add_page(); pdf.set_link(links_grupos[g]) 
         pdf.set_font("Times", 'B', 16); pdf.set_text_color(*theme_color)
@@ -1052,13 +1062,14 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     else:
         pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay datos de performance registrados para esta área en este período."), ln=True)
 
-    def agregar_tabla_tiempos(titulo, palabras_clave):
+    def agregar_tabla_tiempos(titulo, palabra_clave):
         check_space(pdf, 25); print_section_title(pdf, titulo, theme_color)
         resumen_eventos = {}
-        if not df_pdf.empty:
-            mask = df_pdf[['Nivel Evento 1', 'Nivel Evento 2', 'Nivel Evento 3', 'Nivel Evento 4']].apply(
-                lambda row: any(isinstance(val, str) and any(kw in val.upper() for kw in palabras_clave) for val in row), axis=1)
+        
+        if not df_pdf.empty and 'Nivel Evento 4' in df_pdf.columns:
+            mask = df_pdf['Nivel Evento 4'].astype(str).str.upper().str.contains(palabra_clave)
             df_ev = df_pdf[mask]
+            
             for _, r in df_ev.iterrows():
                 t = float(r['Tiempo (Min)'])
                 for op in str(r['Operador']).split('/'):
@@ -1092,8 +1103,8 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay registros de tiempo acumulado para este ítem en el período."), ln=True)
 
     pdf.set_link(link_tiempos)
-    agregar_tabla_tiempos("Tiempo de Baño Acumulado", ["BAÑO", "BANO"])
-    agregar_tabla_tiempos("Tiempo de Refrigerio Acumulado", ["REFRIGERIO"])
+    agregar_tabla_tiempos("Tiempo de Baño Acumulado", "BAÑO")
+    agregar_tabla_tiempos("Tiempo de Refrigerio Acumulado", "REFRIGERIO")
 
     return pdf.output(dest='S').encode('latin-1')
 
