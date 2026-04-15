@@ -149,11 +149,11 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
         df_prod_target = conn.query(q_prod)
         df_metrics = conn.query(q_metrics)
 
+        # Filtramos "usuario" de la tabla de performance
         if not df_op_target.empty:
             df_op_target = df_op_target[~df_op_target['Operador'].str.lower().str.contains('usuario', na=False)]
 
-        # --- SQL SEGURO: Trae los operadores logueados en la celda ---
-        # (Aún no incluye técnicos de mantenimiento porque las tablas [User] / OperatorId dieron error)
+        # --- SQL MAGNÍFICO: Trae Celda (OPERATOR) + Asistencia Andon/Mantenimiento (ANDON_01) ---
         q_event = f"""
             SELECT e.Id as Evento_Id, c.Name as Máquina, e.Started as Inicio, e.Finish as Fin, 
                    e.Interval as [Tiempo (Min)], 
@@ -162,7 +162,9 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
                    t5.Name as [Nivel Evento 5], t6.Name as [Nivel Evento 6],
                    t7.Name as [Nivel Evento 7], t8.Name as [Nivel Evento 8],
                    t9.Name as [Nivel Evento 9],
-                   op.Name as Operador, 
+                   op_celda.Name as Operador_Celda,
+                   op_req.Name as Operador_Req,
+                   op_resp.Name as Operador_Resp,
                    e.Date as Fecha_Filtro, f.Name as Fábrica, tu.Name as Turno
             FROM EVENT_01 e
             LEFT JOIN CELL c ON e.CellId = c.CellId
@@ -177,8 +179,13 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             LEFT JOIN EVENTTYPE t9 ON e.EventTypeLevel9 = t9.EventTypeId
             LEFT JOIN FACTORY f ON e.FactoryId = f.FactoryId
             LEFT JOIN TURN tu ON e.TurnId = tu.TurnId
+            -- 1. Operario produciendo en la celda
             LEFT JOIN EVENT_OPERATOR_01 eo ON e.Id = eo.EventId
-            LEFT JOIN OPERATOR op ON eo.OperatorId = op.OperatorId
+            LEFT JOIN OPERATOR op_celda ON eo.OperatorId = op_celda.OperatorId
+            -- 2. Tecnicos de mantenimiento / asistencia (ANDON_01)
+            LEFT JOIN ANDON_01 a ON e.CellId = a.CellId AND e.Started = a.Started
+            LEFT JOIN OPERATOR op_req ON a.RequesterOperatorId = op_req.OperatorId
+            LEFT JOIN OPERATOR op_resp ON a.ResponserOperatorId = op_resp.OperatorId
             WHERE e.Date BETWEEN '{ini_str}' AND '{fin_str}'
         """
         df_raw = conn.query(q_event)
@@ -189,26 +196,48 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             df_raw['Fin_Str'] = pd.to_datetime(df_raw['Fin']).dt.strftime('%H:%M')
             df_raw['Tiempo (Min)'] = pd.to_numeric(df_raw['Tiempo (Min)'], errors='coerce').fillna(0)
             
-            # Limpiamos operadores, borramos "usuarios" genéricos y colapsamos duplicados
-            cols_grupo = [c for c in df_raw.columns if c != 'Operador']
+            # Limpiamos nulos de los 3 tipos de operadores
+            df_raw['Operador_Celda'] = df_raw['Operador_Celda'].fillna('').astype(str)
+            df_raw['Operador_Req'] = df_raw['Operador_Req'].fillna('').astype(str)
+            df_raw['Operador_Resp'] = df_raw['Operador_Resp'].fillna('').astype(str)
 
-            def limpiar_operadores(ops):
-                nombres = []
-                for val in ops.dropna():
-                    for part in str(val).split('/'):
-                        p = part.strip()
-                        if p and p != '-':
-                            if p not in nombres:
-                                nombres.append(p)
+            # Agrupamos por si hubo multiples operarios logueados en la misma celda
+            cols_grupo = [c for c in df_raw.columns if c not in ['Operador_Celda', 'Operador_Req', 'Operador_Resp']]
+
+            def agrupar_nombres(ops):
+                n = [str(x).strip() for x in ops.unique() if pd.notna(x) and str(x).strip() != '']
+                return ' / '.join(n)
+
+            df_raw = df_raw.groupby(cols_grupo, dropna=False).agg({
+                'Operador_Celda': agrupar_nombres,
+                'Operador_Req': agrupar_nombres,
+                'Operador_Resp': agrupar_nombres
+            }).reset_index()
+
+            # LÓGICA INTELIGENTE DE OPERADOR: Prioriza al Técnico de Mantenimiento, luego al Solicitante, luego a Celda
+            def determinar_operador_final(row):
+                resp = row['Operador_Resp']
+                req = row['Operador_Req']
+                celda = row['Operador_Celda']
                 
-                reales = [n for n in nombres if 'usuario' not in n.lower() and 'admin' not in n.lower()]
-                if reales:
-                    return ' / '.join(reales)
-                elif nombres:
-                    return nombres[-1]
+                # 1. El técnico que cerró/resolvió la falla (Ej. Fabián Gómez)
+                if resp:
+                    reales = [n.strip() for n in resp.split('/') if 'usuario' not in n.lower() and 'admin' not in n.lower()]
+                    if reales: return ' / '.join(reales)
+                    
+                # 2. Quien pidió el mantenimiento
+                if req:
+                    reales = [n.strip() for n in req.split('/') if 'usuario' not in n.lower() and 'admin' not in n.lower()]
+                    if reales: return ' / '.join(reales)
+                    
+                # 3. Operador de producción en la celda
+                if celda:
+                    reales = [n.strip() for n in celda.split('/') if 'usuario' not in n.lower() and 'admin' not in n.lower()]
+                    if reales: return ' / '.join(reales)
+                    
                 return '-'
 
-            df_raw = df_raw.groupby(cols_grupo, dropna=False).agg({'Operador': limpiar_operadores}).reset_index()
+            df_raw['Operador'] = df_raw.apply(determinar_operador_final, axis=1)
 
             # Clasificación de Niveles de Evento
             cols_niveles = [c for c in df_raw.columns if 'Nivel Evento' in c]
@@ -1080,7 +1109,6 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 maq_set = operador_maquinas.get(op_name, set())
                 maq_str = ", ".join(sorted(list(maq_set))) if maq_set else "-"
                 
-                # Barrera adicional: si por alguna razón la tabla de Performance trae "usuario", la ignoramos.
                 if 'usuario' in op_name.lower() or 'admin' in op_name.lower():
                     continue
 
@@ -1188,29 +1216,3 @@ with col_p3:
                         st.download_button("Descargar Resumen", data=pdf_resumen, file_name=f"FAMMA_Resumen_Planta_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                     except Exception as e:
                         st.error(f"Error generando PDF: {e}")
-
-# ==========================================
-# MODO DETECTIVE FINAL: SIN ADIVINAR
-# ==========================================
-st.divider()
-st.write("### 🔍 MODO DETECTIVE FINAL")
-
-try:
-    conn = st.connection("wii_bi", type="sql")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("**1. Tablas que se conectan al Evento:**")
-        df_links = conn.query("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE COLUMN_NAME = 'EventId'")
-        st.dataframe(df_links)
-        
-    with col2:
-        st.write("**2. Columnas en la tabla ANDON_01 (Mantenimiento):**")
-        df_andon = conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ANDON_01'")
-        st.dataframe(df_andon)
-        
-    st.info("Por favor, copia y pega los nombres que salen en estas tablas en el chat.")
-        
-except Exception as e:
-    st.error(f"Error consultando el esquema: {e}")
