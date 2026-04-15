@@ -1190,29 +1190,20 @@ with col_p3:
                         st.error(f"Error generando PDF: {e}")
 
 # ==========================================
-# MODO DETECTIVE 2.0: EL ESLABÓN PERDIDO
+# MODO DETECTIVE 3.0: EL SANTO GRIAL (V_EVENT_01)
 # ==========================================
 st.divider()
-st.write("### 🔍 MODO DETECTIVE 2.0: Encontrando al Técnico")
+st.write("### 🔍 MODO DETECTIVE 3.0: La Vista Maestra")
 
 try:
     conn = st.connection("wii_bi", type="sql")
     
-    col1, col2 = st.columns(2)
+    st.write("**Columnas y datos reales del reporte prearmado del sistema:**")
+    # Traemos solo 5 filas para no saturar, ordenadas por los últimos eventos
+    q_vista = "SELECT TOP 5 * FROM V_EVENT_01 ORDER BY Started DESC"
+    df_vista = conn.query(q_vista)
     
-    with col1:
-        st.write("**1. Tablas secretas conectadas al Evento:**")
-        # Le preguntamos a SQL qué tablas tienen la columna EventId
-        q_links = "SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE COLUMN_NAME LIKE '%EventId%'"
-        df_links = conn.query(q_links)
-        st.dataframe(df_links)
-        
-    with col2:
-        st.write("**2. Vistas (Reportes de Excel prearmados):**")
-        # Le preguntamos a SQL si existe una Vista que ya tenga tu Excel armado
-        q_views = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_NAME LIKE '%EVENT%'"
-        df_views = conn.query(q_views)
-        st.dataframe(df_views)
+    st.dataframe(df_vista)
         
 except Exception as e:
-    st.error(f"Error consultando el esquema: {e}")
+    st.error(f"Error consultando la vista: {e}")
