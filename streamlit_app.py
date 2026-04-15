@@ -1190,20 +1190,27 @@ with col_p3:
                         st.error(f"Error generando PDF: {e}")
 
 # ==========================================
-# MODO DETECTIVE 3.0: EL SANTO GRIAL (V_EVENT_01)
+# MODO DETECTIVE FINAL: SIN ADIVINAR
 # ==========================================
 st.divider()
-st.write("### 🔍 MODO DETECTIVE 3.0: La Vista Maestra")
+st.write("### 🔍 MODO DETECTIVE FINAL")
 
 try:
     conn = st.connection("wii_bi", type="sql")
     
-    st.write("**Columnas y datos reales del reporte prearmado del sistema:**")
-    # Traemos solo 5 filas para no saturar, ordenadas por los últimos eventos
-    q_vista = "SELECT TOP 5 * FROM V_EVENT_01 ORDER BY Started DESC"
-    df_vista = conn.query(q_vista)
+    col1, col2 = st.columns(2)
     
-    st.dataframe(df_vista)
+    with col1:
+        st.write("**1. Tablas que se conectan al Evento:**")
+        df_links = conn.query("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE COLUMN_NAME = 'EventId'")
+        st.dataframe(df_links)
+        
+    with col2:
+        st.write("**2. Columnas en la tabla ANDON_01 (Mantenimiento):**")
+        df_andon = conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ANDON_01'")
+        st.dataframe(df_andon)
+        
+    st.info("Por favor, copia y pega los nombres que salen en estas tablas en el chat.")
         
 except Exception as e:
-    st.error(f"Error consultando la vista: {e}")
+    st.error(f"Error consultando el esquema: {e}")
