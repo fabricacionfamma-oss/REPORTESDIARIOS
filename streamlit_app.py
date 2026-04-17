@@ -679,6 +679,11 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             if metrics:
                 maquinas_metricas[maq] = metrics
                 t_p = metrics['T_Planificado']; t_o = metrics['T_Operativo']
+                
+                # FIX: Si se editó manual y el sistema no registró tiempos, damos peso 1 para evitar division por cero en el Total del Grupo
+                if override_estampado and t_p == 0: t_p = 1
+                if override_estampado and t_o == 0: t_o = 1
+
                 g_plan += t_p; g_op += t_o
                 g_buenas += metrics['Buenas']; g_totales += metrics['Totales']
                 
@@ -1069,7 +1074,8 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     if area.upper() == "ESTAMPADO" and override_estampado:
         pdf.set_font("Arial", 'B', 10)
         pdf.set_text_color(220, 20, 20) # Advertencia en Rojo
-        pdf.cell(0, 10, clean_text("⚠️ Revisar valores en sistema wiidem - Valores de perfo, dispo y calidad modificados manualmente este dia debido a las diferencias de conteo de la linea respecto a la produccion real."), ln=True)
+        texto_adv = "⚠️ REVISAR VALORES EN SISTEMA WIIDEM: Los indicadores de Performance, Disponibilidad y Calidad de las lineas fueron modificados manualmente para este reporte. La tabla de performance individual de operarios se ha ocultado para evitar inconsistencias con los datos originales."
+        pdf.multi_cell(0, 6, clean_text(texto_adv))
         pdf.ln(8)
     else:
         # Lógica normal si no hubo modificación manual
@@ -1207,36 +1213,48 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
     if habilitar_edicion:
         col_ed1, col_ed2 = st.columns(2)
         
+        # Inicializamos los dataframes editados vacíos para evitar errores más adelante
+        df_met_editado = pd.DataFrame()
+        df_prod_editado = pd.DataFrame()
+        
         with col_ed1:
             st.write("**1. Indicadores (Performance, Disp, Calidad)**")
             st.caption("Edite los valores. El OEE se recalculará automáticamente (OEE = Disp * Perf * Cal).")
             
-            mask_met_est = df_metrics['Máquina'].apply(es_maquina_estampado)
-            df_met_est = df_metrics[mask_met_est][['Máquina', 'DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD']].copy()
-            
-            # Generamos la tabla editable (deshabilitamos la columna máquina para no romper cruces)
-            df_met_editado = st.data_editor(
-                df_met_est, 
-                column_config={"Máquina": st.column_config.TextColumn("Máquina", disabled=True)}, 
-                hide_index=True, use_container_width=True, key="ed_met"
-            )
+            # Validación: Solo mostrar si hay datos
+            if not df_metrics.empty and 'Máquina' in df_metrics.columns:
+                mask_met_est = df_metrics['Máquina'].apply(es_maquina_estampado)
+                df_met_est = df_metrics[mask_met_est][['Máquina', 'DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD']].copy()
+                
+                # Generamos la tabla editable (deshabilitamos la columna máquina para no romper cruces)
+                df_met_editado = st.data_editor(
+                    df_met_est, 
+                    column_config={"Máquina": st.column_config.TextColumn("Máquina", disabled=True)}, 
+                    hide_index=True, use_container_width=True, key="ed_met"
+                )
+            else:
+                st.info("No hay datos de indicadores cargados para este período.")
             
         with col_ed2:
             st.write("**2. Producción por Código (Cantidades)**")
             st.caption("Ajuste las cantidades de piezas producidas.")
             
-            mask_prod_est = pdf_df_prod_target['Máquina'].apply(es_maquina_estampado)
-            df_prod_est = pdf_df_prod_target[mask_prod_est][['Máquina', 'Código', 'Buenas', 'Retrabajo', 'Observadas']].copy()
-            
-            # Generamos la tabla editable de producción
-            df_prod_editado = st.data_editor(
-                df_prod_est,
-                column_config={
-                    "Máquina": st.column_config.TextColumn("Máquina", disabled=True),
-                    "Código": st.column_config.TextColumn("Código", disabled=True)
-                },
-                hide_index=True, use_container_width=True, key="ed_prod"
-            )
+            # Validación: Solo mostrar si hay datos
+            if not pdf_df_prod_target.empty and 'Máquina' in pdf_df_prod_target.columns:
+                mask_prod_est = pdf_df_prod_target['Máquina'].apply(es_maquina_estampado)
+                df_prod_est = pdf_df_prod_target[mask_prod_est][['Máquina', 'Código', 'Buenas', 'Retrabajo', 'Observadas']].copy()
+                
+                # Generamos la tabla editable de producción
+                df_prod_editado = st.data_editor(
+                    df_prod_est,
+                    column_config={
+                        "Máquina": st.column_config.TextColumn("Máquina", disabled=True),
+                        "Código": st.column_config.TextColumn("Código", disabled=True)
+                    },
+                    hide_index=True, use_container_width=True, key="ed_prod"
+                )
+            else:
+                st.info("No hay datos de producción cargados para este período.")
 
         # --- LÓGICA DE ACTUALIZACIÓN EN MEMORIA ---
         if not df_met_editado.empty:
@@ -1245,20 +1263,31 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
                 idx = df_metrics[df_metrics['Máquina'] == maq].index
                 if not idx.empty:
                     d, p, c = row['DISPONIBILIDAD'], row['PERFORMANCE'], row['CALIDAD']
-                    # Sobreescribimos y recalculamos OEE
-                    df_metrics.loc[idx, ['DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD', 'OEE']] = [d, p, c, (d * p * c)]
+                    
+                    # Normalizamos a decimales (0 a 1) para no romper el DataFrame global
+                    # Ej: Si escribes 92.5, se convierte en 0.925. Si escribes 0.925 se queda igual.
+                    d_norm = d / 100.0 if d > 2 else d
+                    p_norm = p / 100.0 if p > 2 else p
+                    c_norm = c / 100.0 if c > 2 else c
+                    
+                    oee_val = d_norm * p_norm * c_norm
+                    
+                    # Sobreescribimos y recalculamos OEE usando la escala correcta de SQL
+                    df_metrics.loc[idx, ['DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD', 'OEE']] = [d_norm, p_norm, c_norm, oee_val]
 
         if not df_prod_editado.empty:
             # Reemplazar datos de producción en el DF general de producción
-            pdf_df_prod_target = pdf_df_prod_target[~mask_prod_est] 
+            mask_prod_global = pdf_df_prod_target['Máquina'].apply(es_maquina_estampado)
+            pdf_df_prod_target = pdf_df_prod_target[~mask_prod_global] 
             pdf_df_prod_target = pd.concat([pdf_df_prod_target, df_prod_editado], ignore_index=True)
             
             # Actualizar también los totales agregados en el DF de métricas para que el KPI de arriba cuadre
             prod_agrup = df_prod_editado.groupby('Máquina')[['Buenas', 'Retrabajo', 'Observadas']].sum().reset_index()
             for _, row in prod_agrup.iterrows():
-                idx = df_metrics[df_metrics['Máquina'] == row['Máquina']].index
-                if not idx.empty:
-                    df_metrics.loc[idx, ['Buenas', 'Retrabajo', 'Observadas']] = [row['Buenas'], row['Retrabajo'], row['Observadas']]
+                if not df_metrics.empty:
+                    idx = df_metrics[df_metrics['Máquina'] == row['Máquina']].index
+                    if not idx.empty:
+                        df_metrics.loc[idx, ['Buenas', 'Retrabajo', 'Observadas']] = [row['Buenas'], row['Retrabajo'], row['Observadas']]
 
 
 # ==========================================
