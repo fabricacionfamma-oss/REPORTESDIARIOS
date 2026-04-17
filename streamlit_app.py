@@ -538,7 +538,7 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
 # ==========================================
 # 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL
 # ==========================================
-def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_tipo, df_trend, df_metrics_pdf):
+def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_tipo, df_trend, df_metrics_pdf, override_estampado=False):
     if area.upper() == "ESTAMPADO":
         theme_color = (15, 76, 129); comp_color = (52, 152, 219)  
         chart_bars = ['#003366', '#3498DB', '#AED6F1']; pie_colors = px.colors.sequential.Blues_r
@@ -1065,64 +1065,72 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     pdf.cell(0, 10, clean_text(f"SECCIÓN FINAL: PERFORMANCE Y TIEMPOS"), ln=True, align='L', border='B'); pdf.ln(5)
     print_section_title(pdf, "Performance de Operarios General", theme_color)
     
-    if not op_target_df.empty:
-        df_filt = op_target_df[op_target_df['Fábrica'].astype(str).str.contains(area, case=False, na=False)].copy()
-        if df_filt.empty and not df_pdf.empty:
-            ops_activos = []
-            for op_list in df_pdf['Operador'].unique():
-                if pd.notna(op_list) and op_list != '-': ops_activos.extend([o.strip() for o in op_list.split('/')])
-            df_filt = op_target_df[op_target_df['Operador'].isin(ops_activos)].copy()
-            
-        if not df_filt.empty:
-            df_filt = df_filt.drop_duplicates(subset=['Operador']).copy()
-            df_filt['PERFORMANCE'] = pd.to_numeric(df_filt['PERFORMANCE'], errors='coerce').fillna(0)
-            df_filt = df_filt.sort_values('PERFORMANCE', ascending=False)
-            
-            # MAQUINAS OPERADAS POR OPERADOR DESDE EVENTOS
-            operador_maquinas = {}
-            if not df_pdf.empty:
-                for _, r in df_pdf.iterrows():
-                    maq = str(r['Máquina']).strip()
-                    ops = str(r['Operador']).split('/')
-                    for o in ops:
-                        o = o.strip()
-                        if o and o != '-':
-                            if o not in operador_maquinas:
-                                operador_maquinas[o] = set()
-                            operador_maquinas[o].add(maq)
-
-            def dibujar_cabeza_oper():
-                setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 9)
-                pdf.cell(50, 6, "Operador", 1, 0, 'C', True)
-                pdf.cell(35, 6, "Fabrica", 1, 0, 'C', True)
-                pdf.cell(85, 6, "Maquinas Operadas", 1, 0, 'C', True)
-                pdf.cell(20, 6, "Perf.", 1, 1, 'C', True)
-
-            dibujar_cabeza_oper()
-            setup_table_row(pdf); pdf.set_font("Arial", '', 9)
-            for _, row in df_filt.iterrows():
-                if pdf.get_y() > 270: 
-                    pdf.add_page(); dibujar_cabeza_oper(); setup_table_row(pdf); pdf.set_font("Arial", '', 9)
-                perf_val = int(round(row['PERFORMANCE']))
-                
-                op_name = clean_text(str(row['Operador'])).strip()
-                maq_set = operador_maquinas.get(op_name, set())
-                maq_str = ", ".join(sorted(list(maq_set))) if maq_set else "-"
-                
-                if 'usuario' in op_name.lower() or 'admin' in op_name.lower():
-                    continue
-
-                pdf.cell(50, 5, " " + op_name[:28], 'B')
-                pdf.cell(35, 5, " " + clean_text(str(row['Fábrica'])[:18]), 'B')
-                pdf.cell(85, 5, " " + clean_text(maq_str[:50]), 'B')
-                    
-                if perf_val >= 90: pdf.set_text_color(33, 195, 84)
-                elif perf_val >= 80: pdf.set_text_color(200, 150, 0)
-                else: pdf.set_text_color(220, 20, 20)
-                pdf.cell(20, 5, f"{perf_val}%", 'B', 1, 'C'); pdf.set_text_color(50, 50, 50)
-            pdf.ln(10)
+    # NUEVA LÓGICA: Si estamos en Estampado y hubo modificación manual, bloqueamos la tabla de operarios
+    if area.upper() == "ESTAMPADO" and override_estampado:
+        pdf.set_font("Arial", 'B', 10)
+        pdf.set_text_color(220, 20, 20) # Advertencia en Rojo
+        pdf.cell(0, 10, clean_text("⚠️ Revisar valores en sistema wiidem - Valores de perfo, dispo y calidad modificados manualmente este dia debido a las diferencias de conteo de la linea respecto a la produccion real."), ln=True)
+        pdf.ln(8)
     else:
-        pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay datos de performance registrados para esta área en este período."), ln=True); pdf.ln(8)
+        # Lógica normal si no hubo modificación manual
+        if not op_target_df.empty:
+            df_filt = op_target_df[op_target_df['Fábrica'].astype(str).str.contains(area, case=False, na=False)].copy()
+            if df_filt.empty and not df_pdf.empty:
+                ops_activos = []
+                for op_list in df_pdf['Operador'].unique():
+                    if pd.notna(op_list) and op_list != '-': ops_activos.extend([o.strip() for o in op_list.split('/')])
+                df_filt = op_target_df[op_target_df['Operador'].isin(ops_activos)].copy()
+                
+            if not df_filt.empty:
+                df_filt = df_filt.drop_duplicates(subset=['Operador']).copy()
+                df_filt['PERFORMANCE'] = pd.to_numeric(df_filt['PERFORMANCE'], errors='coerce').fillna(0)
+                df_filt = df_filt.sort_values('PERFORMANCE', ascending=False)
+                
+                # MAQUINAS OPERADAS POR OPERADOR DESDE EVENTOS
+                operador_maquinas = {}
+                if not df_pdf.empty:
+                    for _, r in df_pdf.iterrows():
+                        maq = str(r['Máquina']).strip()
+                        ops = str(r['Operador']).split('/')
+                        for o in ops:
+                            o = o.strip()
+                            if o and o != '-':
+                                if o not in operador_maquinas:
+                                    operador_maquinas[o] = set()
+                                operador_maquinas[o].add(maq)
+
+                def dibujar_cabeza_oper():
+                    setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 9)
+                    pdf.cell(50, 6, "Operador", 1, 0, 'C', True)
+                    pdf.cell(35, 6, "Fabrica", 1, 0, 'C', True)
+                    pdf.cell(85, 6, "Maquinas Operadas", 1, 0, 'C', True)
+                    pdf.cell(20, 6, "Perf.", 1, 1, 'C', True)
+
+                dibujar_cabeza_oper()
+                setup_table_row(pdf); pdf.set_font("Arial", '', 9)
+                for _, row in df_filt.iterrows():
+                    if pdf.get_y() > 270: 
+                        pdf.add_page(); dibujar_cabeza_oper(); setup_table_row(pdf); pdf.set_font("Arial", '', 9)
+                    perf_val = int(round(row['PERFORMANCE']))
+                    
+                    op_name = clean_text(str(row['Operador'])).strip()
+                    maq_set = operador_maquinas.get(op_name, set())
+                    maq_str = ", ".join(sorted(list(maq_set))) if maq_set else "-"
+                    
+                    if 'usuario' in op_name.lower() or 'admin' in op_name.lower():
+                        continue
+
+                    pdf.cell(50, 5, " " + op_name[:28], 'B')
+                    pdf.cell(35, 5, " " + clean_text(str(row['Fábrica'])[:18]), 'B')
+                    pdf.cell(85, 5, " " + clean_text(maq_str[:50]), 'B')
+                        
+                    if perf_val >= 90: pdf.set_text_color(33, 195, 84)
+                    elif perf_val >= 80: pdf.set_text_color(200, 150, 0)
+                    else: pdf.set_text_color(220, 20, 20)
+                    pdf.cell(20, 5, f"{perf_val}%", 'B', 1, 'C'); pdf.set_text_color(50, 50, 50)
+                pdf.ln(10)
+        else:
+            pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay datos de performance registrados para esta área en este período."), ln=True); pdf.ln(8)
 
     def agregar_tabla_tiempos(titulo, palabra_clave):
         check_space(pdf, 35); print_section_title(pdf, titulo, theme_color)
@@ -1179,6 +1187,81 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
+# 5.5. CORRECCIÓN MANUAL DE DATOS (ESTAMPADO)
+# ==========================================
+st.divider()
+
+habilitar_edicion = False  # Bandera por defecto
+
+# Función auxiliar para identificar si una máquina pertenece a Estampado
+def es_maquina_estampado(maq):
+    maq_u = str(maq).strip().upper()
+    if maq_u in MAQUINAS_MAP and MAQUINAS_MAP[maq_u] == 'LÍNEAS ESTAMPADO': return True
+    if 'LINEA' in maq_u or 'LÍNEA' in maq_u: return True
+    return False
+
+with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
+    st.markdown("Utilice esta sección si la producción o los indicadores no se cerraron a tiempo en el sistema y necesita **forzar los valores** para el reporte.")
+    habilitar_edicion = st.toggle("Habilitar sobreescritura manual", value=False)
+    
+    if habilitar_edicion:
+        col_ed1, col_ed2 = st.columns(2)
+        
+        with col_ed1:
+            st.write("**1. Indicadores (Performance, Disp, Calidad)**")
+            st.caption("Edite los valores. El OEE se recalculará automáticamente (OEE = Disp * Perf * Cal).")
+            
+            mask_met_est = df_metrics['Máquina'].apply(es_maquina_estampado)
+            df_met_est = df_metrics[mask_met_est][['Máquina', 'DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD']].copy()
+            
+            # Generamos la tabla editable (deshabilitamos la columna máquina para no romper cruces)
+            df_met_editado = st.data_editor(
+                df_met_est, 
+                column_config={"Máquina": st.column_config.TextColumn("Máquina", disabled=True)}, 
+                hide_index=True, use_container_width=True, key="ed_met"
+            )
+            
+        with col_ed2:
+            st.write("**2. Producción por Código (Cantidades)**")
+            st.caption("Ajuste las cantidades de piezas producidas.")
+            
+            mask_prod_est = pdf_df_prod_target['Máquina'].apply(es_maquina_estampado)
+            df_prod_est = pdf_df_prod_target[mask_prod_est][['Máquina', 'Código', 'Buenas', 'Retrabajo', 'Observadas']].copy()
+            
+            # Generamos la tabla editable de producción
+            df_prod_editado = st.data_editor(
+                df_prod_est,
+                column_config={
+                    "Máquina": st.column_config.TextColumn("Máquina", disabled=True),
+                    "Código": st.column_config.TextColumn("Código", disabled=True)
+                },
+                hide_index=True, use_container_width=True, key="ed_prod"
+            )
+
+        # --- LÓGICA DE ACTUALIZACIÓN EN MEMORIA ---
+        if not df_met_editado.empty:
+            for _, row in df_met_editado.iterrows():
+                maq = row['Máquina']
+                idx = df_metrics[df_metrics['Máquina'] == maq].index
+                if not idx.empty:
+                    d, p, c = row['DISPONIBILIDAD'], row['PERFORMANCE'], row['CALIDAD']
+                    # Sobreescribimos y recalculamos OEE
+                    df_metrics.loc[idx, ['DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD', 'OEE']] = [d, p, c, (d * p * c)]
+
+        if not df_prod_editado.empty:
+            # Reemplazar datos de producción en el DF general de producción
+            pdf_df_prod_target = pdf_df_prod_target[~mask_prod_est] 
+            pdf_df_prod_target = pd.concat([pdf_df_prod_target, df_prod_editado], ignore_index=True)
+            
+            # Actualizar también los totales agregados en el DF de métricas para que el KPI de arriba cuadre
+            prod_agrup = df_prod_editado.groupby('Máquina')[['Buenas', 'Retrabajo', 'Observadas']].sum().reset_index()
+            for _, row in prod_agrup.iterrows():
+                idx = df_metrics[df_metrics['Máquina'] == row['Máquina']].index
+                if not idx.empty:
+                    df_metrics.loc[idx, ['Buenas', 'Retrabajo', 'Observadas']] = [row['Buenas'], row['Retrabajo'], row['Observadas']]
+
+
+# ==========================================
 # 6. BOTONES DE EXPORTACIÓN EN PANTALLA
 # ==========================================
 with col_p3:
@@ -1193,7 +1276,8 @@ with col_p3:
         if st.button("Reporte ESTAMPADO", use_container_width=True):
             with st.spinner("Generando PDF Estampado..."):
                 try:
-                    pdf_data = crear_pdf("Estampado", pdf_label, pdf_df_op_target, pdf_df_prod_target, df_raw, pdf_tipo, df_trend, df_metrics)
+                    # Pasamos el estado del toggle como override_estampado
+                    pdf_data = crear_pdf("Estampado", pdf_label, pdf_df_op_target, pdf_df_prod_target, df_raw, pdf_tipo, df_trend, df_metrics, override_estampado=habilitar_edicion)
                     st.download_button("Descargar Estampado", data=pdf_data, file_name=f"FAMMA_Estampado_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
                     st.error(f"Error generando PDF: {e}")
@@ -1202,7 +1286,8 @@ with col_p3:
         if st.button("Reporte SOLDADURA", use_container_width=True):
             with st.spinner("Generando PDF Soldadura..."):
                 try:
-                    pdf_data = crear_pdf("Soldadura", pdf_label, pdf_df_op_target, pdf_df_prod_target, df_raw, pdf_tipo, df_trend, df_metrics)
+                    # Soldadura no usa la bandera de override por ahora
+                    pdf_data = crear_pdf("Soldadura", pdf_label, pdf_df_op_target, pdf_df_prod_target, df_raw, pdf_tipo, df_trend, df_metrics, override_estampado=False)
                     st.download_button("Descargar Soldadura", data=pdf_data, file_name=f"FAMMA_Soldadura_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
                     st.error(f"Error generando PDF: {e}")
