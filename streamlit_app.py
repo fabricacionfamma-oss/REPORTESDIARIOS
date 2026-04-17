@@ -1074,7 +1074,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     if area.upper() == "ESTAMPADO" and override_estampado:
         pdf.set_font("Arial", 'B', 10)
         pdf.set_text_color(220, 20, 20) # Advertencia en Rojo
-        texto_adv = "⚠️ REVISAR VALORES EN SISTEMA WIIDEM: Los indicadores de Performance, Disponibilidad y Calidad de las lineas fueron modificados manualmente para este reporte. La tabla de performance individual de operarios se ha ocultado para evitar inconsistencias con los datos originales."
+        texto_adv = "REVISAR VALORES EN SISTEMA WIIDEM: Los indicadores de Performance, Disponibilidad y Calidad de las lineas fueron modificados manualmente para este reporte debido a errores en el conteo automatico. La tabla de performance individual de operarios se ha ocultado para evitar inconsistencias con los datos originales."
         pdf.multi_cell(0, 6, clean_text(texto_adv))
         pdf.ln(8)
     else:
