@@ -1213,7 +1213,7 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
     if habilitar_edicion:
         col_ed1, col_ed2 = st.columns(2)
         
-        # Inicializamos los dataframes editados vacíos para evitar errores más adelante
+        # Inicializamos los dataframes editados vacíos para evitar errores
         df_met_editado = pd.DataFrame()
         df_prod_editado = pd.DataFrame()
         
@@ -1226,7 +1226,7 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
                 mask_met_est = df_metrics['Máquina'].apply(es_maquina_estampado)
                 df_met_est = df_metrics[mask_met_est][['Máquina', 'DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD']].copy()
                 
-                # Generamos la tabla editable (deshabilitamos la columna máquina para no romper cruces)
+                # Generamos la tabla editable
                 df_met_editado = st.data_editor(
                     df_met_est, 
                     column_config={"Máquina": st.column_config.TextColumn("Máquina", disabled=True)}, 
@@ -1258,22 +1258,33 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
 
         # --- LÓGICA DE ACTUALIZACIÓN EN MEMORIA ---
         if not df_met_editado.empty:
+            # Detectamos si la consulta SQL original trajo los datos en escala 0-100 o 0-1
+            escala_100 = False
+            if not df_metrics.empty and df_metrics['DISPONIBILIDAD'].max() > 1.5:
+                escala_100 = True
+
             for _, row in df_met_editado.iterrows():
                 maq = row['Máquina']
                 idx = df_metrics[df_metrics['Máquina'] == maq].index
                 if not idx.empty:
                     d, p, c = row['DISPONIBILIDAD'], row['PERFORMANCE'], row['CALIDAD']
                     
-                    # Normalizamos a decimales (0 a 1) para no romper el DataFrame global
-                    # Ej: Si escribes 92.5, se convierte en 0.925. Si escribes 0.925 se queda igual.
-                    d_norm = d / 100.0 if d > 2 else d
-                    p_norm = p / 100.0 if p > 2 else p
-                    c_norm = c / 100.0 if c > 2 else c
-                    
-                    oee_val = d_norm * p_norm * c_norm
-                    
-                    # Sobreescribimos y recalculamos OEE usando la escala correcta de SQL
-                    df_metrics.loc[idx, ['DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD', 'OEE']] = [d_norm, p_norm, c_norm, oee_val]
+                    if escala_100:
+                        # Si el SQL está en escala 100 (ej: 95.0) y el usuario metió 0.95 por error, lo ajustamos
+                        d_val = d * 100 if (d <= 1.5 and d > 0) else d
+                        p_val = p * 100 if (p <= 1.5 and p > 0) else p
+                        c_val = c * 100 if (c <= 1.5 and c > 0) else c
+                        # Calculamos OEE correctamente y lo dejamos en escala de 100
+                        oee_val = (d_val / 100.0) * (p_val / 100.0) * (c_val / 100.0) * 100.0
+                    else:
+                        # Si el SQL está en escala 1 (ej: 0.95) y el usuario metió 95, lo ajustamos
+                        d_val = d / 100.0 if d > 1.5 else d
+                        p_val = p / 100.0 if p > 1.5 else p
+                        c_val = c / 100.0 if c > 1.5 else c
+                        oee_val = d_val * p_val * c_val
+
+                    # Guardamos los valores EN LA MISMA ESCALA que usa el resto de las máquinas
+                    df_metrics.loc[idx, ['DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD', 'OEE']] = [d_val, p_val, c_val, oee_val]
 
         if not df_prod_editado.empty:
             # Reemplazar datos de producción en el DF general de producción
@@ -1288,8 +1299,6 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
                     idx = df_metrics[df_metrics['Máquina'] == row['Máquina']].index
                     if not idx.empty:
                         df_metrics.loc[idx, ['Buenas', 'Retrabajo', 'Observadas']] = [row['Buenas'], row['Retrabajo'], row['Observadas']]
-
-
 # ==========================================
 # 6. BOTONES DE EXPORTACIÓN EN PANTALLA
 # ==========================================
