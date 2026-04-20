@@ -1195,59 +1195,82 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     agregar_tabla_tiempos("Tiempo de Baño Acumulado", "BAÑO")
     agregar_tabla_tiempos("Tiempo de Refrigerio Acumulado", "REFRIGERIO")
 
-    # =========================================================================
+  # =========================================================================
     # NUEVA SECCIÓN: AUDITORÍA DE CAMBIOS (ANEXO)
     # =========================================================================
     if area.upper() == "ESTAMPADO" and override_estampado and df_metrics_ORIG is not None and df_prod_ORIG is not None:
         pdf.add_page()
         print_section_title(pdf, "ANEXO: AUDITORÍA DE AJUSTES MANUALES", (220, 20, 20)) # Título en rojo
         pdf.set_font("Arial", '', 9)
-        pdf.multi_cell(0, 5, clean_text("Este anexo detalla las diferencias entre los valores capturados automáticamente por el sistema Wiidem y los valores corregidos manualmente por la jefatura para este reporte."))
+        pdf.multi_cell(0, 5, clean_text("Este anexo detalla las diferencias entre los valores capturados automáticamente por el sistema Wiidem y los valores corregidos para este reporte."))
         pdf.ln(5)
+
+        # Escala: Determinar si el sistema original usa 0.95 o 95.0
+        escala_original = 100 if not df_metrics_ORIG.empty and df_metrics_ORIG['OEE'].max() > 1.5 else 1
 
         # --- Comparativa de Indicadores ---
         pdf.set_font("Arial", 'B', 10); pdf.cell(0, 7, "1. Comparativa de OEE e Indicadores", ln=True)
-        setup_table_header(pdf, (220, 20, 20))
-        pdf.set_font("Arial", 'B', 8)
-        pdf.cell(45, 6, "Maquina", 1, 0, 'C', True)
-        pdf.cell(35, 6, "Metrica", 1, 0, 'C', True)
-        pdf.cell(35, 6, "Valor Original", 1, 0, 'C', True)
-        pdf.cell(35, 6, "Valor Corregido", 1, 0, 'C', True)
-        pdf.cell(40, 6, "Diferencia", 1, 1, 'C', True)
 
-        setup_table_row(pdf); pdf.set_font("Arial", '', 8)
+        maquinas_editadas = df_metrics_pdf[df_metrics_pdf['Máquina'].apply(asignar_grupo_dinamico) == 'LÍNEAS ESTAMPADO']['Máquina'].unique()
         
-        # Escala: Determinar si el sistema usa 0.95 o 95.0
-        escala_original = 100 if not df_metrics_ORIG.empty and df_metrics_ORIG['OEE'].max() > 1.5 else 1
-
-        for maq in df_metrics_pdf[df_metrics_pdf['Máquina'].apply(asignar_grupo_dinamico) == 'LÍNEAS ESTAMPADO']['Máquina'].unique():
+        for maq in maquinas_editadas:
             if not df_metrics_ORIG[df_metrics_ORIG['Máquina'] == maq].empty and not df_metrics_pdf[df_metrics_pdf['Máquina'] == maq].empty:
                 row_orig = df_metrics_ORIG[df_metrics_ORIG['Máquina'] == maq].iloc[0]
                 row_nuevo = df_metrics_pdf[df_metrics_pdf['Máquina'] == maq].iloc[0]
 
+                # 1. Identificar si hay diferencias antes de dibujar tablas vacías
+                diferencias_maq = []
                 metricas = [('OEE', 'OEE'), ('DISPONIBILIDAD', 'Disp'), ('PERFORMANCE', 'Perf'), ('CALIDAD', 'Cal')]
                 
                 for m_key, m_label in metricas:
                     v_orig = row_orig.get(m_key, 0)
                     v_nuevo = row_nuevo.get(m_key, 0)
                     
-                    # Normalizar para comparar (todo a base 100)
+                    # CORRECCIÓN DE ESCALA:
+                    # df_metrics_ORIG mantiene su escala original, pero df_metrics_pdf (row_nuevo) 
+                    # ya fue forzado a escala 0-1 (dividiendo por 100) al inicio de la función crear_pdf.
                     comp_orig = v_orig if escala_original == 100 else v_orig * 100
-                    comp_nuevo = v_nuevo if escala_original == 100 else v_nuevo * 100
+                    comp_nuevo = v_nuevo * 100  # Siempre multiplicamos el nuevo por 100 porque ya viene en 0-1
+                    
+                    diff = comp_nuevo - comp_orig
 
-                    if abs(comp_orig - comp_nuevo) > 0.01:
-                        pdf.cell(45, 5, " " + clean_text(maq), 1)
-                        pdf.cell(35, 5, " " + m_label, 1)
-                        pdf.cell(35, 5, f"{comp_orig:.2f}%", 1, 0, 'C')
-                        pdf.cell(35, 5, f"{comp_nuevo:.2f}%", 1, 0, 'C')
-                        pdf.set_text_color(220, 20, 20)
-                        pdf.cell(40, 5, f"{comp_nuevo - comp_orig:+.2f}%", 1, 1, 'C')
-                        pdf.set_text_color(50, 50, 50)
+                    if abs(diff) > 0.01:
+                        diferencias_maq.append((m_label, comp_orig, comp_nuevo, diff))
+
+                # 2. Dibujar la tabla SOLO si hay diferencias para esta máquina
+                if diferencias_maq:
+                    pdf.ln(2)
+                    pdf.set_font("Arial", 'B', 9); pdf.set_text_color(*theme_color)
+                    pdf.cell(0, 6, clean_text(f">> Máquina: {maq}"), ln=True)
+                    
+                    setup_table_header(pdf, (220, 20, 20))
+                    pdf.set_font("Arial", 'B', 8)
+                    pdf.cell(40, 6, "Métrica", 1, 0, 'C', True)
+                    pdf.cell(40, 6, "Valor Original", 1, 0, 'C', True)
+                    pdf.cell(40, 6, "Valor Corregido", 1, 0, 'C', True)
+                    pdf.cell(40, 6, "Diferencia", 1, 1, 'C', True)
+
+                    setup_table_row(pdf); pdf.set_font("Arial", '', 8)
+                    
+                    for m_label, comp_orig, comp_nuevo, diff in diferencias_maq:
+                        pdf.cell(40, 5, " " + m_label, 1)
+                        pdf.cell(40, 5, f"{comp_orig:.2f}%", 1, 0, 'C')
+                        pdf.cell(40, 5, f"{comp_nuevo:.2f}%", 1, 0, 'C')
+                        
+                        # LOGICA DE COLORES
+                        if diff > 0:
+                            pdf.set_text_color(128, 0, 128) # Violeta para diferencias positivas
+                        else:
+                            pdf.set_text_color(220, 20, 20) # Rojo para diferencias negativas
+                            
+                        pdf.cell(40, 5, f"{diff:+.2f}%", 1, 1, 'C')
+                        pdf.set_text_color(50, 50, 50) # Resetear a gris oscuro para la siguiente celda
 
         pdf.ln(10)
 
         # --- Comparativa de Producción ---
-        pdf.set_font("Arial", 'B', 10); pdf.cell(0, 7, "2. Comparativa de Produccion (Buenas)", ln=True)
+        pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 7, "2. Comparativa de Produccion (Buenas)", ln=True)
         setup_table_header(pdf, (220, 20, 20))
         pdf.cell(45, 6, "Maquina", 1, 0, 'C', True)
         pdf.cell(55, 6, "Codigo", 1, 0, 'C', True)
@@ -1267,14 +1290,25 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         for _, r in dif_p.iterrows():
             pdf.cell(45, 5, " " + clean_text(r['Máquina'][:20]), 1)
             pdf.cell(55, 5, " " + clean_text(r['Código'][:30]), 1)
-            pdf.cell(30, 5, str(int(r['Buenas_O'])), 1, 0, 'C')
-            pdf.cell(30, 5, str(int(r['Buenas_N'])), 1, 0, 'C')
-            pdf.set_text_color(220, 20, 20)
-            pdf.cell(30, 5, f"{int(r['Buenas_N'] - r['Buenas_O']):+d}", 1, 1, 'C')
-            pdf.set_text_color(50, 50, 50)
+            
+            # Forzamos los valores a números enteros cerrados
+            b_orig = int(round(r['Buenas_O']))
+            b_nueva = int(round(r['Buenas_N']))
+            diff_prod = b_nueva - b_orig
+            
+            pdf.cell(30, 5, str(b_orig), 1, 0, 'C')
+            pdf.cell(30, 5, str(b_nueva), 1, 0, 'C')
+            
+            # LOGICA DE COLORES PARA PRODUCCION
+            if diff_prod > 0:
+                pdf.set_text_color(128, 0, 128) # Violeta para mayor producción
+            elif diff_prod < 0:
+                pdf.set_text_color(220, 20, 20) # Rojo para menor producción
+                
+            pdf.cell(30, 5, f"{diff_prod:+d}", 1, 1, 'C')
+            pdf.set_text_color(50, 50, 50) # Reset
 
     return pdf.output(dest='S').encode('latin-1')
-
 # ==========================================
 # 5.5. CORRECCIÓN MANUAL DE DATOS (ESTAMPADO)
 # ==========================================
