@@ -652,34 +652,63 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             pdf.cell(47.5, 6, clean_text(mins_to_duration_str(t_parada)), 1, 0, 'C')
             pdf.cell(47.5, 6, clean_text(mins_to_duration_str(t_desc)), 1, 1, 'C'); pdf.ln(5)
 
-            # Gráficos de Fallas (Compactos)
+            # ==========================================
+            # SECCIÓN DE FALLAS (MODIFICADA PARA NOMBRES LARGOS)
+            # ==========================================
             df_maq_fallas = df_maq[df_maq['Estado_Global'] == 'Falla/Gestión']
             if not df_maq_fallas.empty:
-                pdf.set_font("Arial", 'B', 10); pdf.set_text_color(*comp_color)
-                pdf.cell(100, 6, clean_text("> Top Fallas (Tiempo):"), 0, 0, 'L')
+                pdf.set_font("Arial", 'B', 10)
+                pdf.set_text_color(*comp_color)
+                pdf.cell(100, 6, clean_text("> Top Fallas (Detalle Completo):"), 0, 0, 'L')
                 pdf.cell(90, 6, clean_text("> Tendencia Diaria:"), 0, 1, 'L')
                 
-                y_charts = pdf.get_y()
-                agg_f = df_maq_fallas.groupby('Detalle_Final')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False).head(10)
+                y_inicio_seccion = pdf.get_y()
                 
-                # Truncamiento de etiquetas para que no se corten en el gráfico
-                agg_f['Label'] = agg_f.apply(lambda r: f" {str(r['Detalle_Final'])[:35]}... — {r['Tiempo (Min)']:.0f}m" if len(str(r['Detalle_Final']))>35 else f" {r['Detalle_Final']} — {r['Tiempo (Min)']:.0f}m", axis=1)
-                max_x_val = agg_f['Tiempo (Min)'].max() if not agg_f.empty else 1
+                # 1. Ranking de Fallas con Tabla Nativa (Izquierda)
+                agg_f = df_maq_fallas.groupby('Detalle_Final')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False).head(8)
+                max_time = agg_f['Tiempo (Min)'].max() if not agg_f.empty else 1
                 
-                fig_bar = px.bar(agg_f.sort_values('Tiempo (Min)'), x='Tiempo (Min)', y='Detalle_Final', orientation='h', text='Label')
-                fig_bar.update_traces(marker_color=hex_comp, textposition='outside', textfont_size=10, cliponaxis=False)
-                fig_bar.update_layout(height=220, width=450, margin=dict(t=5, b=5, l=5, r=250), plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False, range=[0, max_x_val*2.2]), yaxis=dict(visible=False))
+                pdf.set_font("Arial", '', 7)
+                pdf.set_text_color(50, 50, 50)
+                
+                y_tabla = y_inicio_seccion
+                ancho_texto = 65
+                ancho_barra_max = 25
+                
+                for _, row in agg_f.iterrows():
+                    pdf.set_xy(10, y_tabla)
+                    nombre_falla = clean_text(row['Detalle_Final'])
+                    mins = row['Tiempo (Min)']
+                    
+                    y_antes = pdf.get_y()
+                    pdf.multi_cell(ancho_texto, 3.5, nombre_falla, border=0, align='L')
+                    y_despues = pdf.get_y()
+                    
+                    valor_barra = (mins / max_time) * ancho_barra_max
+                    pdf.set_fill_color(*comp_color)
+                    pdf.rect(10 + ancho_texto + 2, y_antes + 1, valor_barra, 2, 'F')
+                    
+                    pdf.set_xy(10 + ancho_texto + 2 + valor_barra + 1, y_antes)
+                    pdf.set_font("Arial", 'B', 6)
+                    pdf.cell(10, 4, f"{mins:.0f}m", 0, 0, 'L')
+                    pdf.set_font("Arial", '', 7)
+                    
+                    y_tabla = max(y_despues, y_antes + 4) + 1 
+                    if y_tabla > y_inicio_seccion + 55: break
 
+                # 2. Gráfico de Tendencia (Derecha)
                 trend_f = df_maq_fallas.groupby('Fecha_Filtro')['Tiempo (Min)'].sum().reset_index()
                 fig_line = px.line(trend_f, x='Fecha_Filtro', y='Tiempo (Min)', markers=True)
                 fig_line.update_traces(line_color=hex_comp, marker=dict(size=6, color=hex_theme))
                 fig_line.update_layout(height=220, width=400, margin=dict(t=10, b=30, l=40, r=10), plot_bgcolor='rgba(0,0,0,0)', xaxis_title="", yaxis_title="Minutos")
 
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t1, tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t2:
-                    fig_bar.write_image(t1.name, engine="kaleido"); fig_line.write_image(t2.name, engine="kaleido")
-                    pdf.image(t1.name, x=5, y=y_charts, w=105); pdf.image(t2.name, x=110, y=y_charts, w=95)
-                    os.remove(t1.name); os.remove(t2.name)
-                pdf.set_y(y_charts + 60); pdf.ln(5)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t2:
+                    fig_line.write_image(t2.name, engine="kaleido")
+                    pdf.image(t2.name, x=110, y=y_inicio_seccion, w=95)
+                    os.remove(t2.name)
+                
+                pdf.set_y(max(y_tabla, y_inicio_seccion + 60))
+                pdf.ln(5)
 
             # Sección SMED / Paradas Programadas
             df_maq_paradas = df_maq[df_maq['Estado_Global'] == 'Parada Programada']
