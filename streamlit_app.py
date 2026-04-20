@@ -327,6 +327,11 @@ with col_p2:
 
 df_raw, pdf_df_prod_target, pdf_df_op_target, df_trend, df_metrics = fetch_data_from_db(pdf_ini, pdf_fin, pdf_tipo, mes=pdf_mes, anio=pdf_anio)
 
+# --- CREAR COPIAS DE SEGURIDAD PARA EL ANEXO DEL PDF ---
+df_metrics_ORIGINAL = df_metrics.copy()
+df_prod_ORIGINAL = pdf_df_prod_target.copy()
+
+
 # ==========================================
 # 4. FUNCIONES HELPER PDF
 # ==========================================
@@ -538,7 +543,7 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
 # ==========================================
 # 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL
 # ==========================================
-def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_tipo, df_trend, df_metrics_pdf, override_estampado=False):
+def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_tipo, df_trend, df_metrics_pdf, override_estampado=False, df_metrics_ORIG=None, df_prod_ORIG=None):
     if area.upper() == "ESTAMPADO":
         theme_color = (15, 76, 129); comp_color = (52, 152, 219)  
         chart_bars = ['#003366', '#3498DB', '#AED6F1']; pie_colors = px.colors.sequential.Blues_r
@@ -1190,6 +1195,84 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     agregar_tabla_tiempos("Tiempo de Baño Acumulado", "BAÑO")
     agregar_tabla_tiempos("Tiempo de Refrigerio Acumulado", "REFRIGERIO")
 
+    # =========================================================================
+    # NUEVA SECCIÓN: AUDITORÍA DE CAMBIOS (ANEXO)
+    # =========================================================================
+    if area.upper() == "ESTAMPADO" and override_estampado and df_metrics_ORIG is not None and df_prod_ORIG is not None:
+        pdf.add_page()
+        print_section_title(pdf, "ANEXO: AUDITORÍA DE AJUSTES MANUALES", (220, 20, 20)) # Título en rojo
+        pdf.set_font("Arial", '', 9)
+        pdf.multi_cell(0, 5, clean_text("Este anexo detalla las diferencias entre los valores capturados automáticamente por el sistema Wiidem y los valores corregidos manualmente por la jefatura para este reporte."))
+        pdf.ln(5)
+
+        # --- Comparativa de Indicadores ---
+        pdf.set_font("Arial", 'B', 10); pdf.cell(0, 7, "1. Comparativa de OEE e Indicadores", ln=True)
+        setup_table_header(pdf, (220, 20, 20))
+        pdf.set_font("Arial", 'B', 8)
+        pdf.cell(45, 6, "Maquina", 1, 0, 'C', True)
+        pdf.cell(35, 6, "Metrica", 1, 0, 'C', True)
+        pdf.cell(35, 6, "Valor Original", 1, 0, 'C', True)
+        pdf.cell(35, 6, "Valor Corregido", 1, 0, 'C', True)
+        pdf.cell(40, 6, "Diferencia", 1, 1, 'C', True)
+
+        setup_table_row(pdf); pdf.set_font("Arial", '', 8)
+        
+        # Escala: Determinar si el sistema usa 0.95 o 95.0
+        escala_original = 100 if not df_metrics_ORIG.empty and df_metrics_ORIG['OEE'].max() > 1.5 else 1
+
+        for maq in df_metrics_pdf[df_metrics_pdf['Máquina'].apply(asignar_grupo_dinamico) == 'LÍNEAS ESTAMPADO']['Máquina'].unique():
+            if not df_metrics_ORIG[df_metrics_ORIG['Máquina'] == maq].empty and not df_metrics_pdf[df_metrics_pdf['Máquina'] == maq].empty:
+                row_orig = df_metrics_ORIG[df_metrics_ORIG['Máquina'] == maq].iloc[0]
+                row_nuevo = df_metrics_pdf[df_metrics_pdf['Máquina'] == maq].iloc[0]
+
+                metricas = [('OEE', 'OEE'), ('DISPONIBILIDAD', 'Disp'), ('PERFORMANCE', 'Perf'), ('CALIDAD', 'Cal')]
+                
+                for m_key, m_label in metricas:
+                    v_orig = row_orig.get(m_key, 0)
+                    v_nuevo = row_nuevo.get(m_key, 0)
+                    
+                    # Normalizar para comparar (todo a base 100)
+                    comp_orig = v_orig if escala_original == 100 else v_orig * 100
+                    comp_nuevo = v_nuevo if escala_original == 100 else v_nuevo * 100
+
+                    if abs(comp_orig - comp_nuevo) > 0.01:
+                        pdf.cell(45, 5, " " + clean_text(maq), 1)
+                        pdf.cell(35, 5, " " + m_label, 1)
+                        pdf.cell(35, 5, f"{comp_orig:.2f}%", 1, 0, 'C')
+                        pdf.cell(35, 5, f"{comp_nuevo:.2f}%", 1, 0, 'C')
+                        pdf.set_text_color(220, 20, 20)
+                        pdf.cell(40, 5, f"{comp_nuevo - comp_orig:+.2f}%", 1, 1, 'C')
+                        pdf.set_text_color(50, 50, 50)
+
+        pdf.ln(10)
+
+        # --- Comparativa de Producción ---
+        pdf.set_font("Arial", 'B', 10); pdf.cell(0, 7, "2. Comparativa de Produccion (Buenas)", ln=True)
+        setup_table_header(pdf, (220, 20, 20))
+        pdf.cell(45, 6, "Maquina", 1, 0, 'C', True)
+        pdf.cell(55, 6, "Codigo", 1, 0, 'C', True)
+        pdf.cell(30, 6, "Sist. Orig.", 1, 0, 'C', True)
+        pdf.cell(30, 6, "Corregido", 1, 0, 'C', True)
+        pdf.cell(30, 6, "Dif.", 1, 1, 'C', True)
+
+        setup_table_row(pdf); pdf.set_font("Arial", '', 8)
+
+        # Agrupar producciones originales vs nuevas
+        p_orig_sum = df_prod_ORIG.groupby(['Máquina', 'Código'])['Buenas'].sum().reset_index()
+        p_nueva_sum = prod_target_df.groupby(['Máquina', 'Código'])['Buenas'].sum().reset_index()
+
+        merged = pd.merge(p_orig_sum, p_nueva_sum, on=['Máquina', 'Código'], suffixes=('_O', '_N'))
+        dif_p = merged[merged['Buenas_O'] != merged['Buenas_N']]
+
+        for _, r in dif_p.iterrows():
+            pdf.cell(45, 5, " " + clean_text(r['Máquina'][:20]), 1)
+            pdf.cell(55, 5, " " + clean_text(r['Código'][:30]), 1)
+            pdf.cell(30, 5, str(int(r['Buenas_O'])), 1, 0, 'C')
+            pdf.cell(30, 5, str(int(r['Buenas_N'])), 1, 0, 'C')
+            pdf.set_text_color(220, 20, 20)
+            pdf.cell(30, 5, f"{int(r['Buenas_N'] - r['Buenas_O']):+d}", 1, 1, 'C')
+            pdf.set_text_color(50, 50, 50)
+
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
@@ -1216,14 +1299,18 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
         # Inicializamos los dataframes editados vacíos para evitar errores
         df_met_editado = pd.DataFrame()
         df_prod_editado = pd.DataFrame()
+        df_met_est_orig = pd.DataFrame()
+        df_prod_est_orig = pd.DataFrame()
         
         with col_ed1:
             st.write("**1. Indicadores (Performance, Disp, Calidad)**")
-            st.caption("Edite los valores. El OEE se recalculará automáticamente (OEE = Disp * Perf * Cal).")
+            st.caption("Edite los valores. El OEE se recalculará automáticamente.")
             
             # Validación: Solo mostrar si hay datos
             if not df_metrics.empty and 'Máquina' in df_metrics.columns:
                 mask_met_est = df_metrics['Máquina'].apply(es_maquina_estampado)
+                # Guardamos el original
+                df_met_est_orig = df_metrics[mask_met_est][['Máquina', 'DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD', 'OEE']].copy()
                 df_met_est = df_metrics[mask_met_est][['Máquina', 'DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD']].copy()
                 
                 # Generamos la tabla editable
@@ -1242,7 +1329,9 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
             # Validación: Solo mostrar si hay datos
             if not pdf_df_prod_target.empty and 'Máquina' in pdf_df_prod_target.columns:
                 mask_prod_est = pdf_df_prod_target['Máquina'].apply(es_maquina_estampado)
-                df_prod_est = pdf_df_prod_target[mask_prod_est][['Máquina', 'Código', 'Buenas', 'Retrabajo', 'Observadas']].copy()
+                # Guardamos el original
+                df_prod_est_orig = pdf_df_prod_target[mask_prod_est][['Máquina', 'Código', 'Buenas', 'Retrabajo', 'Observadas']].copy()
+                df_prod_est = df_prod_est_orig.copy()
                 
                 # Generamos la tabla editable de producción
                 df_prod_editado = st.data_editor(
@@ -1256,28 +1345,27 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
             else:
                 st.info("No hay datos de producción cargados para este período.")
 
-        # --- LÓGICA DE ACTUALIZACIÓN EN MEMORIA ---
+        # --- LÓGICA DE ACTUALIZACIÓN EN MEMORIA Y CÁLCULO DE IMPACTO ---
         if not df_met_editado.empty:
-            # Detectamos si la consulta SQL original trajo los datos en escala 0-100 o 0-1
             escala_100 = False
             if not df_metrics.empty and df_metrics['DISPONIBILIDAD'].max() > 1.5:
                 escala_100 = True
 
+            comparacion_oee = []
+
             for _, row in df_met_editado.iterrows():
                 maq = row['Máquina']
                 idx = df_metrics[df_metrics['Máquina'] == maq].index
+                
                 if not idx.empty:
                     d, p, c = row['DISPONIBILIDAD'], row['PERFORMANCE'], row['CALIDAD']
                     
                     if escala_100:
-                        # Si el SQL está en escala 100 (ej: 95.0) y el usuario metió 0.95 por error, lo ajustamos
                         d_val = d * 100 if (d <= 1.5 and d > 0) else d
                         p_val = p * 100 if (p <= 1.5 and p > 0) else p
                         c_val = c * 100 if (c <= 1.5 and c > 0) else c
-                        # Calculamos OEE correctamente y lo dejamos en escala de 100
                         oee_val = (d_val / 100.0) * (p_val / 100.0) * (c_val / 100.0) * 100.0
                     else:
-                        # Si el SQL está en escala 1 (ej: 0.95) y el usuario metió 95, lo ajustamos
                         d_val = d / 100.0 if d > 1.5 else d
                         p_val = p / 100.0 if p > 1.5 else p
                         c_val = c / 100.0 if c > 1.5 else c
@@ -1285,20 +1373,78 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
 
                     # Guardamos los valores EN LA MISMA ESCALA que usa el resto de las máquinas
                     df_metrics.loc[idx, ['DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD', 'OEE']] = [d_val, p_val, c_val, oee_val]
+                    
+                    # Extraer OEE original para comparar visualmente en UI (el PDF usa df_metrics_ORIGINAL)
+                    oee_orig = df_met_est_orig[df_met_est_orig['Máquina'] == maq]['OEE'].values[0]
+                    
+                    # Normalizar a 0-100 para la vista de usuario
+                    if not escala_100: 
+                        oee_orig = oee_orig * 100
+                        oee_val_disp = oee_val * 100
+                    else:
+                        oee_val_disp = oee_val
+                    
+                    if round(oee_orig, 2) != round(oee_val_disp, 2):
+                        comparacion_oee.append({
+                            "Máquina": maq,
+                            "OEE Original": f"{oee_orig:.2f}%",
+                            "OEE Corregido": f"{oee_val_disp:.2f}%",
+                            "Diferencia": f"{oee_val_disp - oee_orig:+.2f}%"
+                        })
 
         if not df_prod_editado.empty:
-            # Reemplazar datos de producción en el DF general de producción
+            # Reemplazar datos de producción en el DF general
             mask_prod_global = pdf_df_prod_target['Máquina'].apply(es_maquina_estampado)
             pdf_df_prod_target = pdf_df_prod_target[~mask_prod_global] 
             pdf_df_prod_target = pd.concat([pdf_df_prod_target, df_prod_editado], ignore_index=True)
             
-            # Actualizar también los totales agregados en el DF de métricas para que el KPI de arriba cuadre
             prod_agrup = df_prod_editado.groupby('Máquina')[['Buenas', 'Retrabajo', 'Observadas']].sum().reset_index()
             for _, row in prod_agrup.iterrows():
                 if not df_metrics.empty:
                     idx = df_metrics[df_metrics['Máquina'] == row['Máquina']].index
                     if not idx.empty:
                         df_metrics.loc[idx, ['Buenas', 'Retrabajo', 'Observadas']] = [row['Buenas'], row['Retrabajo'], row['Observadas']]
+
+            # Generar comparación de producción
+            comparacion_prod = []
+            df_prod_orig_agrup = df_prod_est_orig.groupby(['Máquina', 'Código'])['Buenas'].sum().reset_index()
+            df_prod_nuevo_agrup = df_prod_editado.groupby(['Máquina', 'Código'])['Buenas'].sum().reset_index()
+            
+            merged_prod = pd.merge(df_prod_orig_agrup, df_prod_nuevo_agrup, on=['Máquina', 'Código'], suffixes=('_Orig', '_Nueva'))
+            merged_prod['Dif'] = merged_prod['Buenas_Nueva'] - merged_prod['Buenas_Orig']
+            
+            diferencias_prod = merged_prod[merged_prod['Dif'] != 0]
+            
+            for _, r in diferencias_prod.iterrows():
+                comparacion_prod.append({
+                    "Máquina": r['Máquina'],
+                    "Código": r['Código'],
+                    "Buenas Orig": int(r['Buenas_Orig']),
+                    "Buenas Nuevas": int(r['Buenas_Nueva']),
+                    "Diferencia": f"{int(r['Dif']):+d}"
+                })
+
+        # --- MOSTRAR IMPACTO EN PANTALLA ---
+        if comparacion_oee or comparacion_prod:
+            st.markdown("### 📊 Impacto de las Correcciones")
+            c_imp1, c_imp2 = st.columns(2)
+            
+            with c_imp1:
+                st.write("**Cambios en OEE**")
+                if comparacion_oee:
+                    df_comp_oee = pd.DataFrame(comparacion_oee)
+                    st.dataframe(df_comp_oee, hide_index=True, use_container_width=True)
+                else:
+                    st.success("No se registraron cambios en los indicadores OEE.")
+            
+            with c_imp2:
+                st.write("**Cambios en Piezas Buenas**")
+                if comparacion_prod:
+                    df_comp_prod = pd.DataFrame(comparacion_prod)
+                    st.dataframe(df_comp_prod, hide_index=True, use_container_width=True)
+                else:
+                    st.success("No se registraron cambios en la producción.")
+
 # ==========================================
 # 6. BOTONES DE EXPORTACIÓN EN PANTALLA
 # ==========================================
@@ -1314,8 +1460,20 @@ with col_p3:
         if st.button("Reporte ESTAMPADO", use_container_width=True):
             with st.spinner("Generando PDF Estampado..."):
                 try:
-                    # Pasamos el estado del toggle como override_estampado
-                    pdf_data = crear_pdf("Estampado", pdf_label, pdf_df_op_target, pdf_df_prod_target, df_raw, pdf_tipo, df_trend, df_metrics, override_estampado=habilitar_edicion)
+                    # Pasamos el estado del toggle (override_estampado) y las variables ORIGINALES
+                    pdf_data = crear_pdf(
+                        "Estampado", 
+                        pdf_label, 
+                        pdf_df_op_target, 
+                        pdf_df_prod_target, 
+                        df_raw, 
+                        pdf_tipo, 
+                        df_trend, 
+                        df_metrics, 
+                        override_estampado=habilitar_edicion,
+                        df_metrics_ORIG=df_metrics_ORIGINAL, # Para el anexo del PDF
+                        df_prod_ORIG=df_prod_ORIGINAL        # Para el anexo del PDF
+                    )
                     st.download_button("Descargar Estampado", data=pdf_data, file_name=f"FAMMA_Estampado_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
                     st.error(f"Error generando PDF: {e}")
