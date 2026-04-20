@@ -623,10 +623,15 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         for maq, metrics in maquinas_metricas.items(): print_pdf_metric_row(pdf, f"    > {maq}", metrics)
         pdf.ln(5)
 
-        # 2. ANÁLISIS INDIVIDUAL POR MÁQUINA (UNA POR HOJA)
-        for maq in maq_del_grupo:
-            if p_tipo in ["Semanal", "Mensual"]: pdf.add_page()
-            else: check_space(pdf, 60)
+        # 2. ANÁLISIS INDIVIDUAL POR MÁQUINA
+        for i, maq in enumerate(maq_del_grupo):
+            if p_tipo in ["Semanal", "Mensual"]: 
+                if i > 0: 
+                    pdf.add_page() # Solo crear nueva pagina a partir de la segunda maquina
+                else:
+                    check_space(pdf, 100) # Espacio suficiente en la primera hoja para que quede bajo el OEE
+            else: 
+                check_space(pdf, 60)
 
             df_maq = df_pdf_g[df_pdf_g['Máquina'] == maq]
             t_prod = df_maq[df_maq['Estado_Global'] == 'Producción']['Tiempo (Min)'].sum()
@@ -676,27 +681,65 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                     os.remove(t1.name); os.remove(t2.name)
                 pdf.set_y(y_charts + 60); pdf.ln(5)
 
-            # Sección SMED
+            # Sección SMED / Paradas Programadas
             df_maq_paradas = df_maq[df_maq['Estado_Global'] == 'Parada Programada']
             if not df_maq_paradas.empty:
-                pdf.set_font("Arial", 'B', 10); pdf.cell(0, 6, clean_text("> SMED / Paradas Programadas:"), ln=True)
+                pdf.set_font("Arial", 'B', 10); pdf.set_text_color(*theme_color)
+                pdf.cell(95, 6, clean_text("> SMED / Paradas Programadas:"), 0, 0, 'L')
+                pdf.cell(95, 6, clean_text("> Tendencia Diaria (Minutos):"), 0, 1, 'L')
+
+                y_smed = pdf.get_y()
+
                 res_p = df_maq_paradas.groupby('Detalle_Final').agg(C=('Tiempo (Min)', 'count'), T=('Tiempo (Min)', 'sum')).reset_index().sort_values('T', ascending=False).head(5)
+
+                trend_p = df_maq_paradas.groupby(['Fecha_Filtro', 'Detalle_Final'])['Tiempo (Min)'].mean().reset_index()
+                trend_p['Fecha_Filtro'] = pd.to_datetime(trend_p['Fecha_Filtro'])
+                trend_p = trend_p.sort_values('Fecha_Filtro')
+                trend_p['Detalle_Corto'] = trend_p['Detalle_Final'].apply(lambda x: str(x)[:25] + "..." if len(str(x)) > 25 else str(x))
+                top_5_eventos = res_p.head(5)['Detalle_Final'].tolist()
+                trend_p_filtrado = trend_p[trend_p['Detalle_Final'].isin(top_5_eventos)]
+                
+                fig_trend_p = px.line(trend_p_filtrado, x='Fecha_Filtro', y='Tiempo (Min)', color='Detalle_Corto', markers=True, color_discrete_sequence=px.colors.qualitative.Safe)
+                fig_trend_p.update_xaxes(tickformat="%d/%m")
+                fig_trend_p.update_layout(
+                    height=200, width=420, 
+                    margin=dict(t=10, b=20, l=40, r=10), 
+                    plot_bgcolor='rgba(0,0,0,0)', 
+                    xaxis_title="", yaxis_title="Promedio Min",
+                    showlegend=False
+                )
+                
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_trend_p:
+                    fig_trend_p.write_image(tmp_trend_p.name, engine="kaleido")
+                    pdf.image(tmp_trend_p.name, x=105, y=y_smed, w=95)
+                    os.remove(tmp_trend_p.name)
+
+                pdf.set_y(y_smed + 2)
                 setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
-                pdf.cell(100, 5, "Evento", 1); pdf.cell(30, 5, "Cant.", 1, 0, 'C'); pdf.cell(30, 5, "Total Min", 1, 0, 'C'); pdf.cell(30, 5, "Promedio", 1, 1, 'C')
-                setup_table_row(pdf); pdf.set_font("Arial", '', 8)
+                pdf.cell(50, 6, "Evento", 1, 0, 'C', True)
+                pdf.cell(15, 6, "Cant.", 1, 0, 'C', True)
+                pdf.cell(15, 6, "Total", 1, 0, 'C', True)
+                pdf.cell(15, 6, "Prom.", 1, 1, 'C', True)
+                
+                setup_table_row(pdf); pdf.set_font("Arial", '', 7)
                 for _, rp in res_p.iterrows():
-                    pdf.cell(100, 4.5, " " + clean_text(rp['Detalle_Final'])[:55], 'B')
-                    pdf.cell(30, 4.5, str(int(rp['C'])), 'B', 0, 'C')
-                    pdf.cell(30, 4.5, f"{rp['T']:.0f}m", 'B', 0, 'C')
-                    pdf.cell(30, 4.5, f"{rp['T']/rp['C']:.1f}m", 'B', 1, 'C')
-                pdf.ln(5)
+                    pdf.cell(50, 4.5, " " + clean_text(rp['Detalle_Final'])[:32], 'B')
+                    pdf.cell(15, 4.5, str(int(rp['C'])), 'B', 0, 'C')
+                    pdf.cell(15, 4.5, f"{rp['T']:.0f}m", 'B', 0, 'C')
+                    pdf.cell(15, 4.5, f"{rp['T']/rp['C']:.1f}m", 'B', 1, 'C')
+                
+                pdf.set_y(max(pdf.get_y(), y_smed + 55) + 5)
 
             # Producción de la Máquina
             df_m_prod = df_prod_pdf[df_prod_pdf['Máquina'] == maq].groupby('Código')[['Buenas', 'Retrabajo', 'Observadas']].sum().reset_index().sort_values('Buenas', ascending=False).head(5)
             if not df_m_prod.empty:
-                pdf.set_font("Arial", 'B', 10); pdf.cell(0, 6, clean_text(f"> Producción - {maq}:"), ln=True)
-                setup_table_header(pdf, theme_color)
-                pdf.cell(100, 5, "Codigo", 1); pdf.cell(30, 5, "Buenas", 1, 0, 'C'); pdf.cell(30, 5, "Retrab.", 1, 0, 'C'); pdf.cell(30, 5, "Observ.", 1, 1, 'C')
+                pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0, 0, 0)
+                pdf.cell(0, 6, clean_text(f"> Producción - {maq}:"), ln=True)
+                setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
+                pdf.cell(100, 6, "Codigo", 1, 0, 'C', True)
+                pdf.cell(30, 6, "Buenas", 1, 0, 'C', True)
+                pdf.cell(30, 6, "Retrab.", 1, 0, 'C', True)
+                pdf.cell(30, 6, "Observ.", 1, 1, 'C', True)
                 setup_table_row(pdf); pdf.set_font("Arial", '', 8)
                 for _, pr in df_m_prod.iterrows():
                     pdf.cell(100, 4.5, " " + clean_text(pr['Código'])[:55], 'B')
