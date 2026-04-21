@@ -653,18 +653,24 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             pdf.cell(47.5, 6, clean_text(mins_to_duration_str(t_desc)), 1, 1, 'C'); pdf.ln(5)
 
             # ==========================================
-            # SECCIÓN DE FALLAS (MODIFICADA PARA NOMBRES LARGOS)
+            # SECCIÓN DE FALLAS
             # ==========================================
             df_maq_fallas = df_maq[df_maq['Estado_Global'] == 'Falla/Gestión']
             if not df_maq_fallas.empty:
                 pdf.set_font("Arial", 'B', 10)
                 pdf.set_text_color(*comp_color)
-                pdf.cell(100, 6, clean_text("> Top Fallas (Detalle Completo):"), 0, 0, 'L')
-                pdf.cell(90, 6, clean_text("> Tendencia Diaria:"), 0, 1, 'L')
+                
+                if p_tipo in ["Semanal", "Mensual"]:
+                    pdf.cell(100, 6, clean_text("> Top Fallas (Detalle Completo):"), 0, 0, 'L')
+                    pdf.cell(90, 6, clean_text("> Tendencia Diaria:"), 0, 1, 'L')
+                    ancho_texto = 65
+                else:
+                    pdf.cell(0, 6, clean_text("> Top Fallas (Detalle Completo):"), 0, 1, 'L')
+                    ancho_texto = 140
                 
                 y_inicio_seccion = pdf.get_y()
                 
-                # 1. Ranking de Fallas con Tabla Nativa (Izquierda)
+                # 1. Ranking de Fallas con Tabla Nativa
                 agg_f = df_maq_fallas.groupby('Detalle_Final')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False).head(8)
                 max_time = agg_f['Tiempo (Min)'].max() if not agg_f.empty else 1
                 
@@ -672,8 +678,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 pdf.set_text_color(50, 50, 50)
                 
                 y_tabla = y_inicio_seccion
-                ancho_texto = 65
-                ancho_barra_max = 25
+                ancho_barra_max = 25 if p_tipo in ["Semanal", "Mensual"] else 30
                 
                 for _, row in agg_f.iterrows():
                     pdf.set_xy(10, y_tabla)
@@ -694,70 +699,87 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                     pdf.set_font("Arial", '', 7)
                     
                     y_tabla = max(y_despues, y_antes + 4) + 1 
-                    if y_tabla > y_inicio_seccion + 55: break
+                    if p_tipo in ["Semanal", "Mensual"] and y_tabla > y_inicio_seccion + 55: break
 
-                # 2. Gráfico de Tendencia (Derecha)
-                trend_f = df_maq_fallas.groupby('Fecha_Filtro')['Tiempo (Min)'].sum().reset_index()
-                fig_line = px.line(trend_f, x='Fecha_Filtro', y='Tiempo (Min)', markers=True)
-                fig_line.update_traces(line_color=hex_comp, marker=dict(size=6, color=hex_theme))
-                fig_line.update_layout(height=220, width=400, margin=dict(t=10, b=30, l=40, r=10), plot_bgcolor='rgba(0,0,0,0)', xaxis_title="", yaxis_title="Minutos")
+                if p_tipo in ["Semanal", "Mensual"]:
+                    # 2. Gráfico de Tendencia (Derecha) - SOLO para Semanal/Mensual
+                    trend_f = df_maq_fallas.groupby('Fecha_Filtro')['Tiempo (Min)'].sum().reset_index()
+                    fig_line = px.line(trend_f, x='Fecha_Filtro', y='Tiempo (Min)', markers=True)
+                    fig_line.update_traces(line_color=hex_comp, marker=dict(size=6, color=hex_theme))
+                    fig_line.update_layout(height=220, width=400, margin=dict(t=10, b=30, l=40, r=10), plot_bgcolor='rgba(0,0,0,0)', xaxis_title="", yaxis_title="Minutos")
 
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t2:
-                    fig_line.write_image(t2.name, engine="kaleido")
-                    pdf.image(t2.name, x=110, y=y_inicio_seccion, w=95)
-                    os.remove(t2.name)
-                
-                pdf.set_y(max(y_tabla, y_inicio_seccion + 60))
-                pdf.ln(5)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as t2:
+                        fig_line.write_image(t2.name, engine="kaleido")
+                        pdf.image(t2.name, x=110, y=y_inicio_seccion, w=95)
+                        os.remove(t2.name)
+                    
+                    pdf.set_y(max(y_tabla, y_inicio_seccion + 60))
+                    pdf.ln(5)
+                else:
+                    pdf.set_y(y_tabla + 5)
 
             # Sección SMED / Paradas Programadas
             df_maq_paradas = df_maq[df_maq['Estado_Global'] == 'Parada Programada']
             if not df_maq_paradas.empty:
                 pdf.set_font("Arial", 'B', 10); pdf.set_text_color(*theme_color)
-                pdf.cell(95, 6, clean_text("> SMED / Paradas Programadas:"), 0, 0, 'L')
-                pdf.cell(95, 6, clean_text("> Tendencia Diaria (Minutos):"), 0, 1, 'L')
+                
+                if p_tipo in ["Semanal", "Mensual"]:
+                    pdf.cell(95, 6, clean_text("> SMED / Paradas Programadas:"), 0, 0, 'L')
+                    pdf.cell(95, 6, clean_text("> Tendencia Diaria (Minutos):"), 0, 1, 'L')
+                else:
+                    pdf.cell(0, 6, clean_text("> SMED / Paradas Programadas:"), 0, 1, 'L')
 
                 y_smed = pdf.get_y()
 
                 res_p = df_maq_paradas.groupby('Detalle_Final').agg(C=('Tiempo (Min)', 'count'), T=('Tiempo (Min)', 'sum')).reset_index().sort_values('T', ascending=False).head(5)
 
-                trend_p = df_maq_paradas.groupby(['Fecha_Filtro', 'Detalle_Final'])['Tiempo (Min)'].mean().reset_index()
-                trend_p['Fecha_Filtro'] = pd.to_datetime(trend_p['Fecha_Filtro'])
-                trend_p = trend_p.sort_values('Fecha_Filtro')
-                trend_p['Detalle_Corto'] = trend_p['Detalle_Final'].apply(lambda x: str(x)[:25] + "..." if len(str(x)) > 25 else str(x))
-                top_5_eventos = res_p.head(5)['Detalle_Final'].tolist()
-                trend_p_filtrado = trend_p[trend_p['Detalle_Final'].isin(top_5_eventos)]
-                
-                fig_trend_p = px.line(trend_p_filtrado, x='Fecha_Filtro', y='Tiempo (Min)', color='Detalle_Corto', markers=True, color_discrete_sequence=px.colors.qualitative.Safe)
-                fig_trend_p.update_xaxes(tickformat="%d/%m")
-                fig_trend_p.update_layout(
-                    height=200, width=420, 
-                    margin=dict(t=10, b=20, l=40, r=10), 
-                    plot_bgcolor='rgba(0,0,0,0)', 
-                    xaxis_title="", yaxis_title="Promedio Min",
-                    showlegend=False
-                )
-                
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_trend_p:
-                    fig_trend_p.write_image(tmp_trend_p.name, engine="kaleido")
-                    pdf.image(tmp_trend_p.name, x=105, y=y_smed, w=95)
-                    os.remove(tmp_trend_p.name)
+                if p_tipo in ["Semanal", "Mensual"]:
+                    # Gráfico de Tendencia (Derecha) - SOLO para Semanal/Mensual
+                    trend_p = df_maq_paradas.groupby(['Fecha_Filtro', 'Detalle_Final'])['Tiempo (Min)'].mean().reset_index()
+                    trend_p['Fecha_Filtro'] = pd.to_datetime(trend_p['Fecha_Filtro'])
+                    trend_p = trend_p.sort_values('Fecha_Filtro')
+                    trend_p['Detalle_Corto'] = trend_p['Detalle_Final'].apply(lambda x: str(x)[:25] + "..." if len(str(x)) > 25 else str(x))
+                    top_5_eventos = res_p.head(5)['Detalle_Final'].tolist()
+                    trend_p_filtrado = trend_p[trend_p['Detalle_Final'].isin(top_5_eventos)]
+                    
+                    fig_trend_p = px.line(trend_p_filtrado, x='Fecha_Filtro', y='Tiempo (Min)', color='Detalle_Corto', markers=True, color_discrete_sequence=px.colors.qualitative.Safe)
+                    fig_trend_p.update_xaxes(tickformat="%d/%m")
+                    fig_trend_p.update_layout(
+                        height=200, width=420, 
+                        margin=dict(t=10, b=20, l=40, r=10), 
+                        plot_bgcolor='rgba(0,0,0,0)', 
+                        xaxis_title="", yaxis_title="Promedio Min",
+                        showlegend=False
+                    )
+                    
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_trend_p:
+                        fig_trend_p.write_image(tmp_trend_p.name, engine="kaleido")
+                        pdf.image(tmp_trend_p.name, x=105, y=y_smed, w=95)
+                        os.remove(tmp_trend_p.name)
 
                 pdf.set_y(y_smed + 2)
                 setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
-                pdf.cell(50, 6, "Evento", 1, 0, 'C', True)
-                pdf.cell(15, 6, "Cant.", 1, 0, 'C', True)
-                pdf.cell(15, 6, "Total", 1, 0, 'C', True)
-                pdf.cell(15, 6, "Prom.", 1, 1, 'C', True)
+                
+                ancho_ev = 50 if p_tipo in ["Semanal", "Mensual"] else 110
+                ancho_col = 15 if p_tipo in ["Semanal", "Mensual"] else 25
+                
+                pdf.cell(ancho_ev, 6, "Evento", 1, 0, 'C', True)
+                pdf.cell(ancho_col, 6, "Cant.", 1, 0, 'C', True)
+                pdf.cell(ancho_col, 6, "Total", 1, 0, 'C', True)
+                pdf.cell(ancho_col, 6, "Prom.", 1, 1, 'C', True)
                 
                 setup_table_row(pdf); pdf.set_font("Arial", '', 7)
                 for _, rp in res_p.iterrows():
-                    pdf.cell(50, 4.5, " " + clean_text(rp['Detalle_Final'])[:32], 'B')
-                    pdf.cell(15, 4.5, str(int(rp['C'])), 'B', 0, 'C')
-                    pdf.cell(15, 4.5, f"{rp['T']:.0f}m", 'B', 0, 'C')
-                    pdf.cell(15, 4.5, f"{rp['T']/rp['C']:.1f}m", 'B', 1, 'C')
+                    caracteres_max = 32 if p_tipo in ["Semanal", "Mensual"] else 70
+                    pdf.cell(ancho_ev, 4.5, " " + clean_text(rp['Detalle_Final'])[:caracteres_max], 'B')
+                    pdf.cell(ancho_col, 4.5, str(int(rp['C'])), 'B', 0, 'C')
+                    pdf.cell(ancho_col, 4.5, f"{rp['T']:.0f}m", 'B', 0, 'C')
+                    pdf.cell(ancho_col, 4.5, f"{rp['T']/rp['C']:.1f}m", 'B', 1, 'C')
                 
-                pdf.set_y(max(pdf.get_y(), y_smed + 55) + 5)
+                if p_tipo in ["Semanal", "Mensual"]:
+                    pdf.set_y(max(pdf.get_y(), y_smed + 55) + 5)
+                else:
+                    pdf.ln(5)
 
             # Producción de la Máquina
             df_m_prod = df_prod_pdf[df_prod_pdf['Máquina'] == maq].groupby('Código')[['Buenas', 'Retrabajo', 'Observadas']].sum().reset_index().sort_values('Buenas', ascending=False).head(5)
