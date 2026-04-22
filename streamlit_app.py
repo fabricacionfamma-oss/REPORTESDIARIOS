@@ -53,6 +53,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
         fin_str = fecha_fin.strftime('%Y-%m-%d')
 
         df_trend = pd.DataFrame()
+        df_horarios = pd.DataFrame()
 
         if tipo_periodo == "Mensual":
             q_prod = f"""
@@ -145,6 +146,21 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
                 df_op_target['PERFORMANCE'] = df_op_target['Perf_Num'] / df_op_target['ProductiveTime'].replace(0, 1)
             else:
                 df_op_target = pd.DataFrame()
+
+            # --- NUEVA CONSULTA PARA HORARIOS Y TURNOS ---
+            q_horarios = f"""
+                SELECT c.Name as Máquina, tu.Name as Turno,
+                       FORMAT(MIN(p.Started), 'HH:mm') as Hora_Inicio,
+                       FORMAT(MAX(p.Finished), 'HH:mm') as Hora_Cierre,
+                       SUM(p.ProductiveTime + p.DownTime) as Apertura_Neta_Min,
+                       SUM(ISNULL(p.NotRegisteredTime, 0)) as No_Registrado_Min
+                FROM PROD_D_02 p
+                JOIN CELL c ON p.CellId = c.CellId
+                JOIN TURN tu ON p.TurnId = tu.TurnId
+                WHERE p.Date BETWEEN '{ini_str}' AND '{fin_str}'
+                GROUP BY c.Name, tu.Name
+            """
+            df_horarios = conn.query(q_horarios)
 
         df_prod_target = conn.query(q_prod)
         df_metrics = conn.query(q_metrics)
@@ -261,11 +277,11 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             df_raw['Categoria_Macro'] = df_raw.apply(clasificar_macro, axis=1)
             df_raw['Detalle_Final'] = df_raw.apply(obtener_detalle_final, axis=1)
 
-        return df_raw, df_prod_target, df_op_target, df_trend, df_metrics
+        return df_raw, df_prod_target, df_op_target, df_trend, df_metrics, df_horarios
 
     except Exception as e:
         st.error(f"Error ejecutando consulta a base de datos wii_bi: {e}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 # ==========================================
 # 3. INTERFAZ: CONFIGURACIÓN PERIODO
@@ -307,7 +323,7 @@ with col_p2:
         pdf_fin = pd.to_datetime(f"{pdf_anio}-{pdf_mes}-{last_day}")
         pdf_label = f"{mes_sel} {pdf_anio}"; file_label = f"{mes_sel}_{pdf_anio}"
 
-df_raw, pdf_df_prod_target, pdf_df_op_target, df_trend, df_metrics = fetch_data_from_db(pdf_ini, pdf_fin, pdf_tipo, mes=pdf_mes, anio=pdf_anio)
+df_raw, pdf_df_prod_target, pdf_df_op_target, df_trend, df_metrics, df_horarios = fetch_data_from_db(pdf_ini, pdf_fin, pdf_tipo, mes=pdf_mes, anio=pdf_anio)
 
 # --- CREAR COPIAS DE SEGURIDAD PARA EL ANEXO DEL PDF ---
 df_metrics_ORIGINAL = df_metrics.copy()
@@ -525,7 +541,7 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
 # ==========================================
 # 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL
 # ==========================================
-def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_tipo, df_trend, df_metrics_pdf, override_estampado=False, df_metrics_ORIG=None, df_prod_ORIG=None):
+def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_tipo, df_trend, df_metrics_pdf, df_horarios, override_estampado=False, df_metrics_ORIG=None, df_prod_ORIG=None):
     if area.upper() == "ESTAMPADO":
         theme_color = (15, 76, 129); comp_color = (52, 152, 219)  
         chart_bars = ['#003366', '#3498DB', '#AED6F1']; pie_colors = px.colors.sequential.Blues_r
@@ -623,7 +639,50 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         for maq, metrics in maquinas_metricas.items(): print_pdf_metric_row(pdf, f"    > {maq}", metrics)
         pdf.ln(5)
 
-        # 2. ANÁLISIS INDIVIDUAL POR MÁQUINA
+        # ==========================================
+        # NUEVO: 2. Horarios y Tiempo de Apertura
+        # ==========================================
+        print_section_title(pdf, "2. Horarios y Tiempo de Apertura", theme_color)
+        setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
+        
+        # Anchos de columnas
+        w_maq = 35; w_tur = 20; w_hor = 30; w_tie = 35
+        
+        pdf.cell(w_maq, 6, "Maquina", 1, 0, 'C', True)
+        pdf.cell(w_tur, 6, "Turno", 1, 0, 'C', True)
+        pdf.cell(w_hor, 6, "Hora Inicio", 1, 0, 'C', True)
+        pdf.cell(w_hor, 6, "Hora Cierre", 1, 0, 'C', True)
+        pdf.cell(w_tie, 6, "Apertura Neta", 1, 0, 'C', True)
+        pdf.cell(w_tie, 6, "No Registrado", 1, 1, 'C', True)
+        
+        setup_table_row(pdf); pdf.set_font("Arial", '', 8)
+        
+        if not df_horarios.empty:
+            # Filtrar por máquinas del grupo actual
+            df_horarios_grupo = df_horarios[df_horarios['Máquina'].isin(maq_del_grupo)]
+            
+            if not df_horarios_grupo.empty:
+                for _, r_hor in df_horarios_grupo.sort_values(['Máquina', 'Turno']).iterrows():
+                    pdf.cell(w_maq, 5, " " + clean_text(r_hor['Máquina']), 1, 0, 'L')
+                    pdf.cell(w_tur, 5, clean_text(r_hor['Turno']), 1, 0, 'C')
+                    pdf.cell(w_hor, 5, clean_text(r_hor['Hora_Inicio']), 1, 0, 'C')
+                    pdf.cell(w_hor, 5, clean_text(r_hor['Hora_Cierre']), 1, 0, 'C')
+                    
+                    # Formatear minutos a "HH:MM hs"
+                    apertura_str = mins_to_duration_str(r_hor.get('Apertura_Neta_Min', 0))
+                    no_reg_str = mins_to_duration_str(r_hor.get('No_Registrado_Min', 0))
+                    
+                    pdf.cell(w_tie, 5, apertura_str, 1, 0, 'C')
+                    pdf.cell(w_tie, 5, no_reg_str, 1, 1, 'C')
+            else:
+                pdf.cell(185, 5, "No hay registros de turnos para este grupo.", 1, 1, 'C')
+        else:
+            pdf.cell(185, 5, "No hay registros de turnos para este periodo.", 1, 1, 'C')
+            
+        pdf.ln(5)
+        # ==========================================
+
+        # 3. ANÁLISIS INDIVIDUAL POR MÁQUINA
         for i, maq in enumerate(maq_del_grupo):
             if p_tipo in ["Semanal", "Mensual"]: 
                 if i > 0: 
@@ -1074,6 +1133,7 @@ with col_p3:
                         pdf_tipo, 
                         df_trend, 
                         df_metrics, 
+                        df_horarios,
                         override_estampado=habilitar_edicion,
                         df_metrics_ORIG=df_metrics_ORIGINAL,
                         df_prod_ORIG=df_prod_ORIGINAL
@@ -1086,7 +1146,18 @@ with col_p3:
         if st.button("Reporte SOLDADURA", use_container_width=True):
             with st.spinner("Generando PDF Soldadura..."):
                 try:
-                    pdf_data = crear_pdf("Soldadura", pdf_label, pdf_df_op_target, pdf_df_prod_target, df_raw, pdf_tipo, df_trend, df_metrics, override_estampado=False)
+                    pdf_data = crear_pdf(
+                        "Soldadura", 
+                        pdf_label, 
+                        pdf_df_op_target, 
+                        pdf_df_prod_target, 
+                        df_raw, 
+                        pdf_tipo, 
+                        df_trend, 
+                        df_metrics, 
+                        df_horarios, 
+                        override_estampado=False
+                    )
                     st.download_button("Descargar Soldadura", data=pdf_data, file_name=f"FAMMA_Soldadura_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
                     st.error(f"Error generando PDF: {e}")
