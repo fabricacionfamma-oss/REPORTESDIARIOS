@@ -147,16 +147,29 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             else:
                 df_op_target = pd.DataFrame()
 
-            # --- NUEVA CONSULTA PARA HORARIOS Y TURNOS ---
+            # --- NUEVA CONSULTA PARA HORARIOS Y TURNOS (BASADA EN INSTRUCTIVO BI) ---
             q_horarios = f"""
+                WITH Tiempos_Turno AS (
+                    SELECT CellId, TurnId, 
+                           MIN(Started) as MinInicio, 
+                           MAX(Finish) as MaxFin
+                    FROM EVENT_01
+                    WHERE Date BETWEEN '{ini_str}' AND '{fin_str}'
+                    GROUP BY CellId, TurnId
+                )
                 SELECT c.Name as Máquina, tu.Name as Turno,
-                       FORMAT(MIN(p.Started), 'HH:mm') as Hora_Inicio,
-                       FORMAT(MAX(p.Finished), 'HH:mm') as Hora_Cierre,
-                       SUM(p.ProductiveTime + p.DownTime) as Apertura_Neta_Min,
-                       SUM(ISNULL(p.NotRegisteredTime, 0)) as No_Registrado_Min
+                       FORMAT(MIN(t.MinInicio), 'HH:mm') as Hora_Inicio,
+                       FORMAT(MAX(t.MaxFin), 'HH:mm') as Hora_Cierre,
+                       SUM(ISNULL(p.ProductiveTime, 0) + ISNULL(p.DownTime, 0)) as Apertura_Neta_Min,
+                       CASE 
+                           WHEN ISNULL(DATEDIFF(MINUTE, MIN(t.MinInicio), MAX(t.MaxFin)), 0) - SUM(ISNULL(p.ProductiveTime, 0) + ISNULL(p.DownTime, 0)) > 0 
+                           THEN ISNULL(DATEDIFF(MINUTE, MIN(t.MinInicio), MAX(t.MaxFin)), 0) - SUM(ISNULL(p.ProductiveTime, 0) + ISNULL(p.DownTime, 0))
+                           ELSE 0 
+                       END as No_Registrado_Min
                 FROM PROD_D_02 p
                 JOIN CELL c ON p.CellId = c.CellId
                 JOIN TURN tu ON p.TurnId = tu.TurnId
+                LEFT JOIN Tiempos_Turno t ON p.CellId = t.CellId AND p.TurnId = t.TurnId
                 WHERE p.Date BETWEEN '{ini_str}' AND '{fin_str}'
                 GROUP BY c.Name, tu.Name
             """
@@ -329,7 +342,6 @@ df_raw, pdf_df_prod_target, pdf_df_op_target, df_trend, df_metrics, df_horarios 
 df_metrics_ORIGINAL = df_metrics.copy()
 df_prod_ORIGINAL = pdf_df_prod_target.copy()
 
-
 # ==========================================
 # 4. FUNCIONES HELPER PDF
 # ==========================================
@@ -410,7 +422,6 @@ def add_image_safe(pdf, img_path, w_mm, h_mm, center=True):
     y = pdf.get_y()
     pdf.image(img_path, x=x, y=y, w=w_mm)
     pdf.set_y(y + h_mm + 5)
-
 
 # ==========================================
 # 5.A. MOTOR PARA RESUMEN EJECUTIVO (SOLO MENSUAL)
@@ -537,7 +548,6 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
 
     return pdf.output(dest='S').encode('latin-1')
 
-
 # ==========================================
 # 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL
 # ==========================================
@@ -640,7 +650,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         pdf.ln(5)
 
         # ==========================================
-        # NUEVO: 2. Horarios y Tiempo de Apertura
+        # NUEVO: 2. Horarios y Tiempo de Apertura (Semaforizado)
         # ==========================================
         print_section_title(pdf, "2. Horarios y Tiempo de Apertura", theme_color)
         setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
@@ -658,17 +668,40 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         setup_table_row(pdf); pdf.set_font("Arial", '', 8)
         
         if not df_horarios.empty:
-            # Filtrar por máquinas del grupo actual
             df_horarios_grupo = df_horarios[df_horarios['Máquina'].isin(maq_del_grupo)]
             
             if not df_horarios_grupo.empty:
                 for _, r_hor in df_horarios_grupo.sort_values(['Máquina', 'Turno']).iterrows():
                     pdf.cell(w_maq, 5, " " + clean_text(r_hor['Máquina']), 1, 0, 'L')
                     pdf.cell(w_tur, 5, clean_text(r_hor['Turno']), 1, 0, 'C')
-                    pdf.cell(w_hor, 5, clean_text(r_hor['Hora_Inicio']), 1, 0, 'C')
+                    
+                    # LOGICA DE SEMAFORIZACIÓN
+                    hora_ini = str(r_hor['Hora_Inicio'])
+                    try:
+                        h, m = map(int, hora_ini.split(':'))
+                        total_min = h * 60 + m
+                        
+                        if 360 <= total_min < 375:     # 06:00 a 06:14 (Verde)
+                            pdf.set_text_color(33, 195, 84)
+                        elif 375 <= total_min < 380:   # 06:15 a 06:19 (Amarillo)
+                            pdf.set_text_color(218, 165, 32)
+                        elif 380 <= total_min < 420:   # 06:20 a 06:59 (Rojo)
+                            pdf.set_text_color(220, 20, 20)
+                        elif total_min >= 420:         # 07:00 en adelante (Violeta)
+                            pdf.set_text_color(128, 0, 128)
+                        else:
+                            pdf.set_text_color(50, 50, 50)
+                    except:
+                        pdf.set_text_color(50, 50, 50)
+                    
+                    # Imprimir Hora de Inicio
+                    pdf.cell(w_hor, 5, hora_ini, 1, 0, 'C')
+                    
+                    # Restaurar el color gris oscuro estándar para el resto de las celdas de la fila
+                    pdf.set_text_color(50, 50, 50) 
+                    
                     pdf.cell(w_hor, 5, clean_text(r_hor['Hora_Cierre']), 1, 0, 'C')
                     
-                    # Formatear minutos a "HH:MM hs"
                     apertura_str = mins_to_duration_str(r_hor.get('Apertura_Neta_Min', 0))
                     no_reg_str = mins_to_duration_str(r_hor.get('No_Registrado_Min', 0))
                     
