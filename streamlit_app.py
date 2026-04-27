@@ -147,17 +147,17 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             else:
                 df_op_target = pd.DataFrame()
 
-            # --- NUEVA CONSULTA PARA HORARIOS Y TURNOS (BASADA EN INSTRUCTIVO BI) ---
+            # --- NUEVA CONSULTA PARA HORARIOS Y TURNOS ADAPTADA A PERÍODOS DIARIOS ---
             q_horarios = f"""
                 WITH Tiempos_Turno AS (
-                    SELECT CellId, TurnId, 
-                           MIN(Started) as MinInicio, 
+                    SELECT CellId, TurnId, Date as Dia,
+                           MIN(Started) as MinInicio,
                            MAX(Finish) as MaxFin
                     FROM EVENT_01
                     WHERE Date BETWEEN '{ini_str}' AND '{fin_str}'
-                    GROUP BY CellId, TurnId
+                    GROUP BY CellId, TurnId, Date
                 )
-                SELECT c.Name as Máquina, tu.Name as Turno,
+                SELECT c.Name as Máquina, tu.Name as Turno, t.Dia,
                        FORMAT(MIN(t.MinInicio), 'HH:mm') as Hora_Inicio,
                        FORMAT(MAX(t.MaxFin), 'HH:mm') as Hora_Cierre,
                        SUM(ISNULL(p.ProductiveTime, 0) + ISNULL(p.DownTime, 0)) as Apertura_Neta_Min,
@@ -166,12 +166,11 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
                            THEN ISNULL(DATEDIFF(MINUTE, MIN(t.MinInicio), MAX(t.MaxFin)), 0) - SUM(ISNULL(p.ProductiveTime, 0) + ISNULL(p.DownTime, 0))
                            ELSE 0 
                        END as No_Registrado_Min
-                FROM PROD_D_02 p
-                JOIN CELL c ON p.CellId = c.CellId
-                JOIN TURN tu ON p.TurnId = tu.TurnId
-                LEFT JOIN Tiempos_Turno t ON p.CellId = t.CellId AND p.TurnId = t.TurnId
-                WHERE p.Date BETWEEN '{ini_str}' AND '{fin_str}'
-                GROUP BY c.Name, tu.Name
+                FROM Tiempos_Turno t
+                JOIN CELL c ON t.CellId = c.CellId
+                JOIN TURN tu ON t.TurnId = tu.TurnId
+                LEFT JOIN PROD_D_02 p ON t.CellId = p.CellId AND t.TurnId = p.TurnId AND t.Dia = p.Date
+                GROUP BY c.Name, tu.Name, t.Dia
             """
             df_horarios = conn.query(q_horarios)
 
@@ -563,7 +562,6 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         
     hex_theme = '#%02x%02x%02x' % theme_color; hex_comp = '#%02x%02x%02x' % comp_color  
 
-    # Estandarización de escala a 0-1 para cálculos internos
     if not df_metrics_pdf.empty and df_metrics_pdf['OEE'].max() > 1.5:
         df_metrics_pdf['OEE'] = df_metrics_pdf['OEE'] / 100.0
         df_metrics_pdf['DISPONIBILIDAD'] = df_metrics_pdf['DISPONIBILIDAD'] / 100.0
@@ -650,63 +648,80 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         pdf.ln(5)
 
         # ==========================================
-        # NUEVO: 2. Horarios y Tiempo de Apertura (Semaforizado)
+        # NUEVO: 2. Horarios y Tiempo de Apertura (Calendario para Semanal)
         # ==========================================
         print_section_title(pdf, "2. Horarios y Tiempo de Apertura", theme_color)
         setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
-        
-        # Anchos de columnas
-        w_maq = 35; w_tur = 20; w_hor = 30; w_tie = 35
-        
-        pdf.cell(w_maq, 6, "Maquina", 1, 0, 'C', True)
-        pdf.cell(w_tur, 6, "Turno", 1, 0, 'C', True)
-        pdf.cell(w_hor, 6, "Hora Inicio", 1, 0, 'C', True)
-        pdf.cell(w_hor, 6, "Hora Cierre", 1, 0, 'C', True)
-        pdf.cell(w_tie, 6, "Apertura Neta", 1, 0, 'C', True)
-        pdf.cell(w_tie, 6, "No Registrado", 1, 1, 'C', True)
-        
-        setup_table_row(pdf); pdf.set_font("Arial", '', 8)
-        
+
         if not df_horarios.empty:
-            df_horarios_grupo = df_horarios[df_horarios['Máquina'].isin(maq_del_grupo)]
-            
+            df_horarios_grupo = df_horarios[df_horarios['Máquina'].isin(maq_del_grupo)].copy()
+
             if not df_horarios_grupo.empty:
-                for _, r_hor in df_horarios_grupo.sort_values(['Máquina', 'Turno']).iterrows():
-                    pdf.cell(w_maq, 5, " " + clean_text(r_hor['Máquina']), 1, 0, 'L')
-                    pdf.cell(w_tur, 5, clean_text(r_hor['Turno']), 1, 0, 'C')
-                    
-                    # LOGICA DE SEMAFORIZACIÓN
-                    hora_ini = str(r_hor['Hora_Inicio'])
-                    try:
-                        h, m = map(int, hora_ini.split(':'))
-                        total_min = h * 60 + m
+                if p_tipo == "Semanal":
+                    w_maq = 35; w_tur = 15; w_day = 27
+                    pdf.cell(w_maq, 6, "Maquina", 1, 0, 'C', True)
+                    pdf.cell(w_tur, 6, "Turno", 1, 0, 'C', True)
+                    dias = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes"]
+                    for d in dias:
+                        pdf.cell(w_day, 6, d, 1, 0 if d != "Viernes" else 1, 'C', True)
+
+                    setup_table_row(pdf); pdf.set_font("Arial", '', 8)
+
+                    df_horarios_grupo['Dia'] = pd.to_datetime(df_horarios_grupo['Dia'])
+                    df_horarios_grupo['Weekday'] = df_horarios_grupo['Dia'].dt.weekday
+                    df_horarios_grupo['Rango'] = df_horarios_grupo.apply(
+                        lambda row: f"{row['Hora_Inicio']}-{row['Hora_Cierre']}" if pd.notna(row['Hora_Inicio']) else "", axis=1
+                    )
+
+                    grouped = df_horarios_grupo.groupby(['Máquina', 'Turno'])
+                    for (maq_name, turno), group in grouped:
+                        pdf.cell(w_maq, 5, " " + clean_text(maq_name), 1, 0, 'L')
+                        pdf.cell(w_tur, 5, clean_text(turno), 1, 0, 'C')
+
+                        for day_idx in range(5):
+                            day_data = group[group['Weekday'] == day_idx]
+                            if not day_data.empty:
+                                rango = day_data.iloc[0]['Rango']
+                                pdf.cell(w_day, 5, rango, 1, 0 if day_idx < 4 else 1, 'C')
+                            else:
+                                pdf.cell(w_day, 5, "", 1, 0 if day_idx < 4 else 1, 'C')
+                        pdf.ln()
+
+                else:
+                    w_maq = 35; w_tur = 20; w_hor = 30; w_tie = 35
+                    pdf.cell(w_maq, 6, "Maquina", 1, 0, 'C', True)
+                    pdf.cell(w_tur, 6, "Turno", 1, 0, 'C', True)
+                    pdf.cell(w_hor, 6, "Hora Inicio", 1, 0, 'C', True)
+                    pdf.cell(w_hor, 6, "Hora Cierre", 1, 0, 'C', True)
+                    pdf.cell(w_tie, 6, "Apertura Neta", 1, 0, 'C', True)
+                    pdf.cell(w_tie, 6, "No Registrado", 1, 1, 'C', True)
+
+                    setup_table_row(pdf); pdf.set_font("Arial", '', 8)
+                    for _, r_hor in df_horarios_grupo.sort_values(['Máquina', 'Turno']).iterrows():
+                        pdf.cell(w_maq, 5, " " + clean_text(r_hor['Máquina']), 1, 0, 'L')
+                        pdf.cell(w_tur, 5, clean_text(r_hor['Turno']), 1, 0, 'C')
                         
-                        if 360 <= total_min < 375:     # 06:00 a 06:14 (Verde)
-                            pdf.set_text_color(33, 195, 84)
-                        elif 375 <= total_min < 380:   # 06:15 a 06:19 (Amarillo)
-                            pdf.set_text_color(218, 165, 32)
-                        elif 380 <= total_min < 420:   # 06:20 a 06:59 (Rojo)
-                            pdf.set_text_color(220, 20, 20)
-                        elif total_min >= 420:         # 07:00 en adelante (Violeta)
-                            pdf.set_text_color(128, 0, 128)
-                        else:
+                        hora_ini = str(r_hor['Hora_Inicio'])
+                        try:
+                            h, m = map(int, hora_ini.split(':'))
+                            total_min = h * 60 + m
+                            if 360 <= total_min < 375: pdf.set_text_color(33, 195, 84)
+                            elif 375 <= total_min < 380: pdf.set_text_color(218, 165, 32)
+                            elif 380 <= total_min < 420: pdf.set_text_color(220, 20, 20)
+                            elif total_min >= 420: pdf.set_text_color(128, 0, 128)
+                            else: pdf.set_text_color(50, 50, 50)
+                        except:
                             pdf.set_text_color(50, 50, 50)
-                    except:
-                        pdf.set_text_color(50, 50, 50)
-                    
-                    # Imprimir Hora de Inicio
-                    pdf.cell(w_hor, 5, hora_ini, 1, 0, 'C')
-                    
-                    # Restaurar el color gris oscuro estándar para el resto de las celdas de la fila
-                    pdf.set_text_color(50, 50, 50) 
-                    
-                    pdf.cell(w_hor, 5, clean_text(r_hor['Hora_Cierre']), 1, 0, 'C')
-                    
-                    apertura_str = mins_to_duration_str(r_hor.get('Apertura_Neta_Min', 0))
-                    no_reg_str = mins_to_duration_str(r_hor.get('No_Registrado_Min', 0))
-                    
-                    pdf.cell(w_tie, 5, apertura_str, 1, 0, 'C')
-                    pdf.cell(w_tie, 5, no_reg_str, 1, 1, 'C')
+                        
+                        pdf.cell(w_hor, 5, hora_ini, 1, 0, 'C')
+                        pdf.set_text_color(50, 50, 50) 
+                        pdf.cell(w_hor, 5, clean_text(r_hor['Hora_Cierre']), 1, 0, 'C')
+                        
+                        apertura_str = mins_to_duration_str(r_hor.get('Apertura_Neta_Min', 0))
+                        no_reg_str = mins_to_duration_str(r_hor.get('No_Registrado_Min', 0))
+                        
+                        pdf.cell(w_tie, 5, apertura_str, 1, 0, 'C')
+                        pdf.cell(w_tie, 5, no_reg_str, 1, 1, 'C')
             else:
                 pdf.cell(185, 5, "No hay registros de turnos para este grupo.", 1, 1, 'C')
         else:
@@ -754,7 +769,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 
                 if p_tipo in ["Semanal", "Mensual"]:
                     pdf.cell(100, 6, clean_text("> Top Fallas (Detalle Completo):"), 0, 0, 'L')
-                    pdf.cell(90, 6, clean_text("> Tendencia Diaria:"), 0, 1, 'L')
+                    pdf.cell(90, 6, clean_text("> Tendencia Diaria de Fallas (Minutos):"), 0, 1, 'L')
                     ancho_texto = 65
                 else:
                     pdf.cell(0, 6, clean_text("> Top Fallas (Detalle Completo):"), 0, 1, 'L')
@@ -817,7 +832,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 
                 if p_tipo in ["Semanal", "Mensual"]:
                     pdf.cell(95, 6, clean_text("> SMED / Paradas Programadas:"), 0, 0, 'L')
-                    pdf.cell(95, 6, clean_text("> Tendencia Diaria (Minutos):"), 0, 1, 'L')
+                    pdf.cell(95, 6, clean_text("> Tendencia Diaria (Promedio en Minutos):"), 0, 1, 'L')
                 else:
                     pdf.cell(0, 6, clean_text("> SMED / Paradas Programadas:"), 0, 1, 'L')
 
