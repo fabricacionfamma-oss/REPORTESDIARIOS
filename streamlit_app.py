@@ -960,6 +960,67 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 pdf.ln(10)
 
     # =========================================================================
+    # SECCIÓN: TIEMPOS DE DESCANSO (BAÑO Y REFRIGERIO)
+    # =========================================================================
+    pdf.add_page()
+    pdf.set_link(link_tiempos)
+    print_section_title(pdf, "Tablas de Tiempos Acumulados de Descanso", theme_color)
+
+    # 1. Filtrar todos los eventos categorizados como 'Descanso'
+    df_descansos = df_pdf[df_pdf['Estado_Global'] == 'Descanso']
+
+    if not df_descansos.empty:
+        # Función auxiliar para no repetir código entre Baño y Refrigerio
+        def generar_tabla_descanso(titulo, palabras_clave):
+            # Buscar las palabras clave en el Detalle o en los niveles del evento
+            mask = df_descansos['Detalle_Final'].astype(str).str.contains('|'.join(palabras_clave), case=False, na=False) | \
+                   df_descansos['Nivel Evento 2'].astype(str).str.contains('|'.join(palabras_clave), case=False, na=False)
+            df_tipo = df_descansos[mask]
+
+            if not df_tipo.empty:
+                pdf.set_font("Arial", 'B', 12)
+                pdf.set_text_color(*theme_color)
+                pdf.cell(0, 8, clean_text(titulo), ln=True)
+
+                # Agrupar la sumatoria de tiempos por operador
+                agg_desc = df_tipo.groupby('Operador').agg(
+                    Total_Min=('Tiempo (Min)', 'sum'),
+                    Cant_Veces=('Tiempo (Min)', 'count')
+                ).reset_index().sort_values('Total_Min', ascending=False)
+
+                # Dibujar encabezados de tabla
+                setup_table_header(pdf, theme_color)
+                pdf.set_font("Arial", 'B', 9)
+                pdf.cell(70, 6, "Operador", 1, 0, 'C', True)
+                pdf.cell(30, 6, "Total Min", 1, 0, 'C', True)
+                pdf.cell(30, 6, "Cant. Veces", 1, 0, 'C', True)
+                pdf.cell(30, 6, "Promedio Min", 1, 1, 'C', True)
+
+                # Dibujar filas de la tabla
+                setup_table_row(pdf)
+                pdf.set_font("Arial", '', 9)
+                for _, r in agg_desc.iterrows():
+                    op_name = clean_text(str(r['Operador'])).strip()
+                    # Ignorar usuarios genéricos de sistema
+                    if 'usuario' in op_name.lower() or 'admin' in op_name.lower() or op_name == '-': 
+                        continue
+                        
+                    pdf.cell(70, 5, " " + op_name[:35], 'B')
+                    pdf.cell(30, 5, f"{r['Total_Min']:.1f}", 'B', 0, 'C')
+                    pdf.cell(30, 5, str(int(r['Cant_Veces'])), 'B', 0, 'C')
+                    pdf.cell(30, 5, f"{(r['Total_Min'] / r['Cant_Veces']):.1f}", 'B', 1, 'C')
+                pdf.ln(8)
+
+        # Generar ambas tablas
+        generar_tabla_descanso("Tiempo de Baño Acumulado", ['baño', 'bano'])
+        generar_tabla_descanso("Tiempo de Refrigerio Acumulado", ['refrigerio'])
+
+    else:
+        pdf.set_font("Arial", '', 10)
+        pdf.set_text_color(50, 50, 50)
+        pdf.cell(0, 6, "No hay datos de descansos (baño o refrigerio) registrados para esta área en este período.", ln=True)
+
+    # =========================================================================
     # ANEXO: AUDITORÍA DE AJUSTES MANUALES
     # =========================================================================
     if area.upper() == "ESTAMPADO" and override_estampado and df_metrics_ORIG is not None:
