@@ -147,7 +147,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             else:
                 df_op_target = pd.DataFrame()
 
-            # --- NUEVA CONSULTA PARA HORARIOS Y TURNOS ADAPTADA A PERÍODOS DIARIOS ---
+            # --- CONSULTA PARA HORARIOS Y TURNOS ADAPTADA A PERÍODOS DIARIOS/SEMANALES ---
             q_horarios = f"""
                 WITH Tiempos_Turno AS (
                     SELECT CellId, TurnId, Date as Dia,
@@ -190,6 +190,8 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
                     GROUP BY p.Date, c.Name
                 """
                 df_trend = conn.query(q_trend_semanal)
+            else:
+                df_trend = pd.DataFrame()
 
         df_prod_target = conn.query(q_prod)
         df_metrics = conn.query(q_metrics)
@@ -394,6 +396,7 @@ class ReportePDF(FPDF):
 
 def clean_text(text):
     if pd.isna(text): return "-"
+    # Usamos caracteres ASCII seguros para FPDF
     return str(text).replace('•', '-').replace('➤', '>').encode('latin-1', 'replace').decode('latin-1')
 
 def check_space(pdf, required_height):
@@ -976,7 +979,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 
             pdf.set_y(max(max_y_tab, y_base_p + 75) + 5)
 
-        # 5. RESUMEN VISUAL DE TIEMPOS DEL GRUPO (FORZA SALTO DE PAGINA)
+        # 5. RESUMEN VISUAL DE TIEMPOS DEL GRUPO
         resumen_global = df_pdf_g.groupby('Estado_Global')['Tiempo (Min)'].sum().reset_index() if not df_pdf_g.empty else pd.DataFrame()
         total_global = resumen_global['Tiempo (Min)'].sum() if not resumen_global.empty else 0
 
@@ -1012,7 +1015,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             print_section_title(pdf, f"{num_section_visual} Resumen Visual de Tiempos del Grupo", theme_color)
             pdf.set_font("Arial", 'I', 9); pdf.set_text_color(100, 100, 100); pdf.cell(0, 6, clean_text("No hay datos de tiempo suficientes para generar gráficos de torta."), ln=True); pdf.ln(5)
 
-        # 6. PRODUCCIÓN POR GRUPO (EN SU PROPIA PAGINA ANTES DE MÁQUINA A MÁQUINA)
+        # 6. PRODUCCIÓN POR GRUPO
         df_prod_pdf_g = df_prod_pdf[df_prod_pdf['Grupo_Máquina'] == g] if not df_prod_pdf.empty else pd.DataFrame()
         if not df_prod_pdf_g.empty:
             pdf.add_page()
@@ -1065,6 +1068,13 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         # ==========================================
         # 7. ANÁLISIS INDIVIDUAL POR MÁQUINA
         # ==========================================
+        maquinas_con_tiempo = []
+        if not df_pdf_g.empty:
+            for maq in sorted(df_pdf_g['Máquina'].unique()):
+                df_maq_temp = df_pdf_g[df_pdf_g['Máquina'] == maq]
+                t_total = df_maq_temp[df_maq_temp['Estado_Global'].isin(['Producción', 'Falla/Gestión', 'Parada Programada', 'Proyecto', 'Descanso'])]['Tiempo (Min)'].sum()
+                if t_total > 0: maquinas_con_tiempo.append(maq)
+
         if maquinas_con_tiempo:
             pdf.add_page()
             pdf.set_link(links_detalle_grupo[g]) 
@@ -1083,11 +1093,12 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 t_prod = df_maq[df_maq['Estado_Global'] == 'Producción']['Tiempo (Min)'].sum()
                 t_falla = df_maq[df_maq['Estado_Global'] == 'Falla/Gestión']['Tiempo (Min)'].sum()
                 t_parada = df_maq[df_maq['Estado_Global'] == 'Parada Programada']['Tiempo (Min)'].sum()
+                t_proy = df_maq[df_maq['Estado_Global'] == 'Proyecto']['Tiempo (Min)'].sum()
                 t_desc = df_maq[df_maq['Estado_Global'] == 'Descanso']['Tiempo (Min)'].sum()
 
                 pdf.set_font("Arial", 'B', 12); pdf.set_text_color(255, 255, 255); pdf.set_fill_color(*comp_color)
                 pdf.cell(0, 8, clean_text(f"  MÁQUINA: {maq}"), border=0, ln=True, fill=True)
-                pdf.ln(2)
+                pdf.set_font("Arial", 'I', 8); pdf.set_text_color(120, 120, 120); pdf.cell(0, 5, clean_text(f"  Grupo: {g}"), border=0, ln=True); pdf.ln(2)
 
                 setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
                 for col in ["Produccion", "Fallas/Gestion", "Paradas Prog.", "Descansos"]: pdf.cell(47.5, 6, col, 1, 0, 'C', True)
