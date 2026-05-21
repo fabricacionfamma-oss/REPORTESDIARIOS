@@ -555,7 +555,7 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
 
         trend_melt = trend_planta.melt(id_vars=['Month', 'Planta'], value_vars=['OEE', 'DISP', 'PERF', 'CAL'], var_name='Indicador', value_name='Valor')
         
-        if trend_melt['Valor'].max() <= 1.5 and trend_melt['Valor'].max() > 0:
+        if trend_melt['Valor'].max() <= 10.0 and trend_melt['Valor'].max() > 0:
             trend_melt['Valor'] = trend_melt['Valor'] * 100
 
         meses_map = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
@@ -727,7 +727,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             if not df_trend.empty:
                 df_trend_g = df_trend[df_trend['Máquina'].isin(maq_del_grupo)].copy()
                 if not df_trend_g.empty:
-                    if df_trend_g['OEE'].max() <= 1.5:
+                    if df_trend_g['OEE'].max() <= 10.0:
                         df_trend_g['OEE'] = df_trend_g['OEE'] * 100
                     
                     meses_map = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
@@ -762,8 +762,8 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             df_m_g = df_metrics_pdf[df_metrics_pdf['Máquina'].isin(maq_del_grupo)].copy()
             if not df_m_g.empty:
                 df_m_g_melt = df_m_g.melt(id_vars=['Máquina'], value_vars=['OEE', 'DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD'], var_name='Indicador', value_name='Valor')
-                if df_m_g_melt['Valor'].max() <= 1.5 and df_m_g_melt['Valor'].max() > 0:
-                    df_m_g_melt['Valor'] = df_m_g_melt['Valor'] * 100
+                
+                df_m_g_melt['Valor'] = df_m_g_melt['Valor'] * 100
                 
                 fig_kpis = px.bar(
                     df_m_g_melt, x='Indicador', y='Valor', color='Máquina', 
