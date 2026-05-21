@@ -1612,7 +1612,7 @@ with st.expander("🚨 Generar Imagen de Registro de Calidad / OPLs (PNG)"):
                 )
             )])
             
-             fig_opl.update_layout(
+            fig_opl.update_layout(
                 title=dict(
                     text=f"<b>Registro Acumulado de Alertas de Calidad (OPL)</b><br><sup>Total de registros: {num_filas} | En rojo: Novedades del día hábil anterior ({fecha_obj_str})</sup>",
                     font=dict(size=20, color="#1F2937")
