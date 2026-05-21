@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import tempfile
 import os
 import calendar
+import io
 from fpdf import FPDF
 from datetime import timedelta
 
@@ -147,7 +148,6 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
             else:
                 df_op_target = pd.DataFrame()
 
-            # --- CONSULTA PARA HORARIOS Y TURNOS ADAPTADA A PERÍODOS DIARIOS/SEMANALES ---
             q_horarios = f"""
                 WITH Tiempos_Turno AS (
                     SELECT CellId, TurnId, Date as Dia,
@@ -396,7 +396,6 @@ class ReportePDF(FPDF):
 
 def clean_text(text):
     if pd.isna(text): return "-"
-    # Usamos caracteres ASCII seguros para FPDF
     return str(text).replace('•', '-').replace('➤', '>').encode('latin-1', 'replace').decode('latin-1')
 
 def check_space(pdf, required_height):
@@ -427,9 +426,9 @@ def set_pdf_color_metric(pdf, val, metric_name):
     target = targets.get(metric_name.upper(), 0.85)
     
     if val >= target:
-        pdf.set_text_color(33, 195, 84) # Verde
+        pdf.set_text_color(33, 195, 84) 
     else:
-        pdf.set_text_color(220, 20, 20) # Rojo
+        pdf.set_text_color(220, 20, 20) 
 
 def print_pdf_metric_row(pdf, prefix, m):
     pdf.set_font("Arial", 'B', 10); pdf.set_text_color(0, 0, 0)
@@ -1276,8 +1275,8 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                     pdf.cell(50, 5, " " + op_name[:28], 'B'); pdf.cell(35, 5, " " + clean_text(str(row['Fábrica'])[:18]), 'B')
                     pdf.cell(85, 5, " " + clean_text(maq_str[:50]), 'B')
                         
-                    if perf_val >= 90: pdf.set_text_color(33, 195, 84) # Verde estricto
-                    else: pdf.set_text_color(220, 20, 20) # Rojo estricto
+                    if perf_val >= 90: pdf.set_text_color(33, 195, 84) 
+                    else: pdf.set_text_color(220, 20, 20) 
                     
                     pdf.cell(20, 5, f"{perf_val}%", 'B', 1, 'C'); pdf.set_text_color(50, 50, 50)
                 pdf.ln(10)
@@ -1324,7 +1323,6 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                         pdf.cell(30, 6, "Cant. Veces", 1, 0, 'C', True); pdf.cell(30, 6, "Promedio Min", 1, 1, 'C', True)
                         setup_table_row(pdf); pdf.set_font("Arial", '', 9)
 
-                    # Evaluar color Rojo según límite
                     is_over = False
                     if p_tipo == "Diario":
                         if r['Total_Min'] > limite_minutos: is_over = True
@@ -1377,7 +1375,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 diffs = []
                 for k, lbl in [('OEE','OEE'),('DISPONIBILIDAD','Disp'),('PERFORMANCE','Perf'),('CALIDAD','Cal')]:
                     v_o = r_orig[k] if escala_orig == 100 else r_orig[k]*100
-                    v_n = r_nuevo[k]*100 # El nuevo ya está estandarizado a 0.9X
+                    v_n = r_nuevo[k]*100 
                     if abs(v_n - v_o) > 0.01: diffs.append((lbl, v_o, v_n))
                 
                 if diffs:
@@ -1415,7 +1413,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
 # ==========================================
 st.divider()
 
-habilitar_edicion = False  # Bandera por defecto
+habilitar_edicion = False  
 
 def es_maquina_estampado(maq):
     maq_u = str(maq).strip().upper()
@@ -1472,7 +1470,6 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
             else:
                 st.info("No hay datos de producción cargados para este período.")
 
-        # --- LÓGICA DE ACTUALIZACIÓN EN MEMORIA Y CÁLCULO DE IMPACTO ---
         if not df_met_editado.empty:
             escala_100 = False
             if not df_metrics.empty and df_metrics['DISPONIBILIDAD'].max() > 1.5:
@@ -1539,7 +1536,6 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
                     "Diferencia": f"{int(round(r['Dif'])):+d}"
                 })
 
-        # --- MOSTRAR IMPACTO EN PANTALLA ---
         if comparacion_oee or comparacion_prod:
             st.markdown("### 📊 Impacto de las Correcciones")
             c_imp1, c_imp2 = st.columns(2)
@@ -1552,9 +1548,105 @@ with st.expander("🛠️ Corrección Manual de Datos - LÍNEAS ESTAMPADO"):
                 if comparacion_prod: st.dataframe(pd.DataFrame(comparacion_prod), hide_index=True, use_container_width=True)
                 else: st.success("No se registraron cambios en la producción.")
 
+# =========================================================================
+# MÓDULO: GENERADOR DE IMAGEN PNG PARA OPLs
+# =========================================================================
+st.divider()
+
+with st.expander("🚨 Generar Imagen de Registro de Calidad / OPLs (PNG)"):
+    st.markdown("Copia la tabla de OPLs desde tu Excel (incluyendo encabezados) y pégala aquí. Se generará una imagen horizontal. Las filas correspondientes al **día hábil anterior** se pintarán en rojo.")
+    
+    datos_pegados = st.text_area("Pega aquí los datos de OPL:", height=150, key="txt_opl")
+    
+    if datos_pegados:
+        try:
+            # 1. Leer los datos del portapapeles
+            df_opl = pd.read_csv(io.StringIO(datos_pegados), sep='\t', dtype=str)
+            df_opl.columns = df_opl.columns.str.strip()
+            
+            # 2. Limpiar símbolos raros de la tabla dinámica (ej. ⊟, +, -)
+            for col in df_opl.columns:
+                df_opl[col] = df_opl[col].astype(str).str.replace('⊟', '', regex=False).str.strip()
+                df_opl[col] = df_opl[col].replace('nan', '')
+
+            # 3. Determinar la "Fecha Objetivo" (Ayer, o Viernes si hoy es Lunes)
+            hoy = pd.to_datetime("today").normalize()
+            if hoy.weekday() == 0:  # 0 = Lunes
+                fecha_objetivo = hoy - timedelta(days=3)  # Retrocede a Viernes
+            else:
+                fecha_objetivo = hoy - timedelta(days=1)  # Retrocede a Ayer
+                
+            fecha_obj_str = fecha_objetivo.strftime('%d/%m/%Y')
+            
+            # 4. Encontrar la columna de fechas para aplicar el color
+            col_fecha = next((c for c in df_opl.columns if 'fecha' in c.lower()), None)
+            
+            row_colors = []
+            if col_fecha:
+                fechas_parsed = pd.to_datetime(df_opl[col_fecha], dayfirst=True, errors='coerce')
+                for fecha in fechas_parsed:
+                    if pd.notna(fecha) and fecha == fecha_objetivo:
+                        row_colors.append('#FFCDD2') 
+                    else:
+                        row_colors.append('#F8F9F9') 
+            else:
+                row_colors = ['#F8F9F9'] * len(df_opl)
+
+            # 5. Armar la tabla como Imagen (Plotly)
+            num_filas = len(df_opl)
+            
+            fig_opl = go.Figure(data=[go.Table(
+                header=dict(
+                    values=list(df_opl.columns),
+                    fill_color='#2C3E50',
+                    font=dict(color='white', size=13, family="Arial"),
+                    align='center',
+                    height=30
+                ),
+                cells=dict(
+                    values=[df_opl[col] for col in df_opl.columns],
+                    fill_color=[row_colors] * len(df_opl.columns),
+                    font=dict(color='black', size=11, family="Arial"),
+                    align='left',
+                    height=25
+                )
+            )])
+            
+            fig_opl.update_layout(
+                title=dict(
+                    text=f"<b>Registro Acumulado de Alertas de Calidad (OPL)</b><br><sup>Total de registros: {num_filas} | En rojo: Novedades del día hábil anterior ({fecha_obj_str})</sup>",
+                    font=dict(size=20, color="#1F2937")
+                ),
+                margin=dict(t=90, b=20, l=20, r=20),
+                width=1300, 
+                height=min(150 + num_filas * 26, 2000) 
+            )
+            
+            st.success(f"¡Tabla procesada! Se detectaron {num_filas} OPLs. Fecha a resaltar: {fecha_obj_str}")
+            
+            # Transformamos la figura en imagen de Alta Resolución (scale=2)
+            img_bytes = fig_opl.to_image(format="png", engine="kaleido", scale=2)
+            
+            # Mostramos una previsualización en la web
+            st.image(img_bytes, use_container_width=True)
+            
+            # Botón de descarga exclusivo
+            st.download_button(
+                label="📥 Descargar Imagen de OPLs (PNG)",
+                data=img_bytes,
+                file_name=f"OPLs_Acumulado_{hoy.strftime('%Y%m%d')}.png",
+                mime="image/png",
+                use_container_width=True
+            )
+            
+        except Exception as e:
+            st.error(f"Error procesando los datos. Asegúrate de copiar bien la tabla desde los encabezados. Detalle: {e}")
+
 # ==========================================
 # 6. BOTONES DE EXPORTACIÓN EN PANTALLA
 # ==========================================
+st.divider()
+
 with col_p3:
     st.write("**3. Generar y Descargar:**")
     
