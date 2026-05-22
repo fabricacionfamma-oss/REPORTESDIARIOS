@@ -465,7 +465,7 @@ def add_image_safe(pdf, img_path, w_mm, h_mm, center=True):
 # ==========================================
 def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
     theme_color = (44, 62, 80) 
-    pdf = ReportePDF("GLOBAL PLANTA", fecha_str, theme_color)
+    pdf = ReportePDF("GLOBAL PLANTA - FAMMA", fecha_str, theme_color)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     
@@ -628,7 +628,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     df_prod_pdf['Máquina_Match'] = df_prod_pdf['Máquina'].astype(str).str.strip().str.upper()
     df_prod_pdf['Grupo_Máquina'] = df_prod_pdf['Máquina_Match'].apply(asignar_grupo_dinamico)
 
-    pdf = ReportePDF(area, label_reporte, theme_color)
+    pdf = ReportePDF(f"{area} - FAMMA", label_reporte, theme_color)
     pdf.set_auto_page_break(auto=True, margin=15); pdf.add_page()
     
     links_resumen_grupo = {g: pdf.add_link() for g in grupos_area}
@@ -722,9 +722,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         for maq, metrics in maquinas_metricas.items(): print_pdf_metric_row(pdf, f"    > {maq}", metrics)
         pdf.ln(5)
 
-        # ==========================================
-        # NUEVO: 2. Gráficos Evolución o KPIs
-        # ==========================================
+        # 2. Gráficos Evolución o KPIs
         if p_tipo == "Mensual":
             check_space(pdf, 80)
             print_section_title(pdf, "2. Evolución Histórica OEE por Máquina", theme_color)
@@ -1070,7 +1068,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                         agg_f15 = df_maq_fallas.groupby('Detalle_Final')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False).head(15)
                         agg_f15 = agg_f15.sort_values('Tiempo (Min)', ascending=True) 
                         agg_f15['Label'] = agg_f15.apply(lambda r: f" {str(r['Detalle_Final'])[:60]} — {r['Tiempo (Min)']:.0f}m", axis=1)
-                        max_x_val = agg_f15['Tiempo (Min)'].max() if not agg_f15.empty else 1
+                        max_x_val = max_x_val = agg_f15['Tiempo (Min)'].max() if not agg_f15.empty else 1
                         
                         trend_df = df_maq_fallas.groupby('Fecha_Filtro')['Tiempo (Min)'].sum().reset_index()
                         trend_df['Fecha_Filtro'] = pd.to_datetime(trend_df['Fecha_Filtro']).sort_values()
@@ -1365,9 +1363,9 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
 
     return pdf.output(dest='S').encode('latin-1')
 
-# =========================================================================
+# ==========================================
 # MÓDULO: GENERADOR DE REPORTE INTEGRAL OPL (PNG DASHBOARD)
-# =========================================================================
+# ==========================================
 st.divider()
 
 with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", expanded=True):
@@ -1384,13 +1382,13 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
                 df_opl[col] = df_opl[col].replace('nan', '')
 
             # Clasificar área y contar
-            def clasificar_area(proc):
+            def clasific_area(proc):
                 proc = str(proc).upper()
                 if 'ESTAMPADO' in proc: return 'Estampado'
                 if 'SOLDADURA' in proc: return 'Soldadura'
                 return 'Otro'
             
-            df_opl['Area_FAMMA'] = df_opl['nombre proceso'].apply(clasificar_area)
+            df_opl['Area_FAMMA'] = df_opl['nombre proceso'].apply(clasific_area)
             c_est = len(df_opl[df_opl['Area_FAMMA'] == 'Estampado'])
             c_sol = len(df_opl[df_opl['Area_FAMMA'] == 'Soldadura'])
             
@@ -1468,7 +1466,7 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
             n_filas = len(df_opl)
             fig_reporte.update_layout(
                 title=dict(
-                    text=f"<b>REPORTE INTEGRAL OPL - FUMISCOR</b><br><sup>Total de registros: {len(df_opl)} | Novedades en rojo del {f_obj_str}</sup>", 
+                    text=f"<b>REPORTE INTEGRAL OPL - FAMMA</b><br><sup>Total de registros: {len(df_opl)} | Novedades en rojo del {f_obj_str}</sup>", 
                     font=dict(size=22)
                 ),
                 width=1300,
@@ -1485,7 +1483,7 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
             st.download_button(
                 label="📥 Descargar Reporte OPL Unificado (PNG)",
                 data=img_bytes,
-                file_name=f"Reporte_OPL_{hoy.strftime('%Y%m%d')}.png",
+                file_name=f"Reporte_OPL_FAMMA_{hoy.strftime('%Y%m%d')}.png",
                 mime="image/png",
                 use_container_width=True
             )
@@ -1521,7 +1519,7 @@ with col_p3:
                         df_metrics,
                         df_horarios
                     )
-                    st.download_button("Descargar Estampado", data=pdf_data, file_name=f"Fumiscor_Estampado_{file_label}.pdf", mime="application/pdf", use_container_width=True)
+                    st.download_button("Descargar Estampado", data=pdf_data, file_name=f"FAMMA_Estampado_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
                     st.error(f"Error generando PDF: {e}")
                     
@@ -1540,7 +1538,7 @@ with col_p3:
                         df_metrics,
                         df_horarios
                     )
-                    st.download_button("Descargar Soldadura", data=pdf_data, file_name=f"Fumiscor_Soldadura_{file_label}.pdf", mime="application/pdf", use_container_width=True)
+                    st.download_button("Descargar Soldadura", data=pdf_data, file_name=f"FAMMA_Soldadura_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
                     st.error(f"Error generando PDF: {e}")
                     
@@ -1550,6 +1548,6 @@ with col_p3:
                 with st.spinner("Generando Resumen Ejecutivo Global..."):
                     try:
                         pdf_resumen = crear_pdf_resumen_ejecutivo(pdf_label, df_trend, df_metrics)
-                        st.download_button("Descargar Resumen", data=pdf_resumen, file_name=f"Fumiscor_Resumen_Planta_{file_label}.pdf", mime="application/pdf", use_container_width=True)
+                        st.download_button("Descargar Resumen", data=pdf_resumen, file_name=f"FAMMA_Resumen_Planta_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                     except Exception as e:
                         st.error(f"Error generando PDF: {e}")
