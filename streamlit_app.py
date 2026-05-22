@@ -1518,7 +1518,8 @@ with col_p3:
                         df_raw, 
                         pdf_tipo, 
                         df_trend, 
-                        df_metrics
+                        df_metrics,
+                        df_horarios
                     )
                     st.download_button("Descargar Estampado", data=pdf_data, file_name=f"Fumiscor_Estampado_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
@@ -1536,7 +1537,8 @@ with col_p3:
                         df_raw, 
                         pdf_tipo, 
                         df_trend, 
-                        df_metrics
+                        df_metrics,
+                        df_horarios
                     )
                     st.download_button("Descargar Soldadura", data=pdf_data, file_name=f"Fumiscor_Soldadura_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                 except Exception as e:
