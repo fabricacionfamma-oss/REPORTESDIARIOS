@@ -380,7 +380,7 @@ def mins_to_time_str(m):
     m = int(m) % 1440; return f"{m//60:02d}:{m%60:02d}"
 
 def mins_to_duration_str(m):
-    if pd.isna(m) or m is None: return "00:00 hs"
+    if pd.isna(m) or m is None or m == 0: return "-"
     m = int(m); return f"{m//60:02d}:{m%60:02d} hs"
 
 class ReportePDF(FPDF):
@@ -467,8 +467,11 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
     theme_color = (44, 62, 80) 
     pdf = ReportePDF("GLOBAL PLANTA - FAMMA", fecha_str, theme_color)
     pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
     
+    # ---------------------------------------------------------
+    # PAGINA 1: RESUMEN EJECUTIVO POR PLANTA (GLOBAL)
+    # ---------------------------------------------------------
+    pdf.add_page()
     print_section_title(pdf, "RESUMEN EJECUTIVO: KPI POR PLANTA", theme_color)
 
     def get_planta(maq_name):
@@ -479,6 +482,14 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
             return 'ESTAMPADO'
         return 'OTRO'
 
+    def asignar_grupo_dinamico(maq):
+        maq_u = str(maq).strip().upper()
+        if maq_u in MAQUINAS_MAP: return MAQUINAS_MAP[maq_u]
+        if 'CELL' in maq_u or 'CELDA' in maq_u: return 'CELDAS SOLDADURA'
+        if 'LINEA' in maq_u or 'LÍNEA' in maq_u: return 'LÍNEAS ESTAMPADO'
+        if 'PRP' in maq_u or 'SOLD' in maq_u: return 'EQUIPOS PRP'
+        return 'Otro'
+
     df_met_all = df_metrics_pdf.copy()
     if not df_met_all.empty and df_met_all['OEE'].max() > 1.5:
         df_met_all['OEE'] = df_met_all['OEE'] / 100.0
@@ -487,6 +498,7 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
         df_met_all['CALIDAD'] = df_met_all['CALIDAD'] / 100.0
 
     df_met_all['Planta'] = df_met_all['Máquina'].apply(get_planta)
+    df_met_all['Grupo'] = df_met_all['Máquina'].apply(asignar_grupo_dinamico)
     
     df_met_all['T_Planificado'] = df_met_all['T_Operativo'].fillna(0) + df_met_all['T_Parada'].fillna(0)
     df_met_all['Piezas_Totales'] = df_met_all['Buenas'].fillna(0) + df_met_all['Retrabajo'].fillna(0) + df_met_all['Observadas'].fillna(0)
@@ -498,9 +510,9 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
 
     met_planta = df_met_all.groupby('Planta')[['OEE_Num', 'Disp_Num', 'Perf_Num', 'Cal_Num', 'T_Planificado', 'T_Operativo', 'Piezas_Totales']].sum()
 
-    def calc_metrics(p_name):
-        if p_name in met_planta.index:
-            row = met_planta.loc[p_name]
+    def calc_metrics(df_grp, idx_name):
+        if idx_name in df_grp.index:
+            row = df_grp.loc[idx_name]
             oee = row['OEE_Num'] / row['T_Planificado'] if row['T_Planificado'] > 0 else 0
             disp = row['Disp_Num'] / row['T_Planificado'] if row['T_Planificado'] > 0 else 0
             perf = row['Perf_Num'] / row['T_Operativo'] if row['T_Operativo'] > 0 else 0
@@ -508,45 +520,48 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
             return oee, disp, perf, cal
         return 0, 0, 0, 0
 
-    oee_est, disp_est, perf_est, cal_est = calc_metrics('ESTAMPADO')
-    oee_sol, disp_sol, perf_sol, cal_sol = calc_metrics('SOLDADURA')
+    oee_est, disp_est, perf_est, cal_est = calc_metrics(met_planta, 'ESTAMPADO')
+    oee_sol, disp_sol, perf_sol, cal_sol = calc_metrics(met_planta, 'SOLDADURA')
 
-    def draw_kpi_row(y, title, oee, disp, perf, cal):
-        pdf.set_xy(10, y)
-        pdf.set_font("Arial", 'B', 12)
-        pdf.set_text_color(*theme_color)
-        pdf.cell(0, 6, clean_text(title), ln=1)
-        y_boxes = pdf.get_y() + 2
+    def draw_kpi_row(pdf_obj, y, title, oee, disp, perf, cal, theme_col):
+        pdf_obj.set_xy(10, y)
+        pdf_obj.set_font("Arial", 'B', 12)
+        pdf_obj.set_text_color(*theme_col)
+        pdf_obj.cell(0, 6, clean_text(title), ln=1)
+        y_boxes = pdf_obj.get_y() + 2
+        
         w = 42; spacing = 5; x_start = 13.5
         
-        def draw_box(x, title_box, val):
-            pdf.set_xy(x, y_boxes)
-            pdf.set_font("Arial", 'B', 9)
-            pdf.set_fill_color(*theme_color)
-            pdf.set_text_color(255, 255, 255)
-            pdf.cell(w, 8, clean_text(title_box), border=1, align='C', fill=True, ln=2)
+        def draw_box(pdf_inner, x, title_box, val, th_col):
+            pdf_inner.set_xy(x, y_boxes)
+            pdf_inner.set_font("Arial", 'B', 9)
+            pdf_inner.set_fill_color(*th_col)
+            pdf_inner.set_text_color(255, 255, 255)
+            pdf_inner.cell(w, 8, clean_text(title_box), border=1, align='C', fill=True, ln=2)
             
-            pdf.set_fill_color(245, 245, 245)
-            set_pdf_color_metric(pdf, val, title_box)
-            pdf.set_font("Arial", 'B', 16)
-            pdf.cell(w, 12, f"{val*100:.1f}%", border=1, align='C', fill=True)
+            pdf_inner.set_fill_color(245, 245, 245)
+            set_pdf_color_metric(pdf_inner, val * 100, title_box)
+            pdf_inner.set_font("Arial", 'B', 16)
+            pdf_inner.cell(w, 12, f"{val * 100:.1f}%", border=1, align='C', fill=True)
         
-        draw_box(x_start, "OEE", oee)
-        draw_box(x_start + w + spacing, "DISPONIBILIDAD", disp)
-        draw_box(x_start + 2*(w + spacing), "PERFORMANCE", perf)
-        draw_box(x_start + 3*(w + spacing), "CALIDAD", cal)
+        draw_box(pdf_obj, x_start, "OEE", oee, theme_col)
+        draw_box(pdf_obj, x_start + w + spacing, "DISPONIBILIDAD", disp, theme_col)
+        draw_box(pdf_obj, x_start + 2*(w + spacing), "PERFORMANCE", perf, theme_col)
+        draw_box(pdf_obj, x_start + 3*(w + spacing), "CALIDAD", cal, theme_col)
         
         return y_boxes + 25
 
     y_curr = pdf.get_y() + 5
-    y_curr = draw_kpi_row(y_curr, "INDICADORES: ESTAMPADO", oee_est, disp_est, perf_est, cal_est)
+    y_curr = draw_kpi_row(pdf, y_curr, "INDICADORES: ESTAMPADO", oee_est, disp_est, perf_est, cal_est, theme_color)
     y_curr += 8
-    y_curr = draw_kpi_row(y_curr, "INDICADORES: SOLDADURA", oee_sol, disp_sol, perf_sol, cal_sol)
+    y_curr = draw_kpi_row(pdf, y_curr, "INDICADORES: SOLDADURA", oee_sol, disp_sol, perf_sol, cal_sol, theme_color)
+
+    meses_map = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
 
     if not df_trend.empty:
         pdf.set_y(y_curr + 10)
         pdf.set_font("Arial", 'B', 12); pdf.set_text_color(*theme_color)
-        pdf.cell(0, 6, clean_text("Evolución Mensual Histórica (4 Indicadores por Planta)"), ln=True)
+        pdf.cell(0, 6, clean_text("Evolución Mensual Histórica por Planta"), ln=True)
 
         df_trend_all = df_trend.copy()
         df_trend_all['Planta'] = df_trend_all['Máquina'].apply(get_planta)
@@ -559,12 +574,10 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
         trend_planta['CAL'] = (trend_planta['Cal_Num'] / trend_planta['Piezas_Totales']).fillna(0)
 
         trend_melt = trend_planta.melt(id_vars=['Month', 'Planta'], value_vars=['OEE', 'DISP', 'PERF', 'CAL'], var_name='Indicador', value_name='Valor')
+        trend_melt['Mes_Nombre'] = trend_melt['Month'].map(meses_map)
         
         if trend_melt['Valor'].max() <= 10.0 and trend_melt['Valor'].max() > 0:
             trend_melt['Valor'] = trend_melt['Valor'] * 100
-
-        meses_map = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
-        trend_melt['Mes_Nombre'] = trend_melt['Month'].map(meses_map)
 
         fig_glob = px.bar(
             trend_melt, x='Mes_Nombre', y='Valor', color='Indicador', facet_row='Planta',
@@ -583,12 +596,81 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
             add_image_safe(pdf, tmp_glob.name, w_mm=190, h_mm=115, center=True)
             os.remove(tmp_glob.name)
 
+    # ---------------------------------------------------------
+    # PAGINA 2: OEE CONSOLIDADO POR GRUPOS
+    # ---------------------------------------------------------
+    pdf.add_page()
+    print_section_title(pdf, "RESUMEN EJECUTIVO: OEE POR GRUPO", theme_color)
+    
+    met_grupo = df_met_all.groupby('Grupo')[['OEE_Num', 'Disp_Num', 'Perf_Num', 'Cal_Num', 'T_Planificado', 'T_Operativo', 'Piezas_Totales']].sum()
+    
+    y_curr = pdf.get_y() + 5
+    for g in GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA:
+        if g in met_grupo.index:
+            if y_curr > 230:
+                pdf.add_page()
+                print_section_title(pdf, "RESUMEN EJECUTIVO: OEE POR GRUPO (Cont.)", theme_color)
+                y_curr = pdf.get_y() + 5
+                
+            oee_g, disp_g, perf_g, cal_g = calc_metrics(met_grupo, g)
+            y_curr = draw_kpi_row(pdf, y_curr, f"GRUPO: {g}", oee_g, disp_g, perf_g, cal_g, theme_color)
+            y_curr += 8
+
+    # ---------------------------------------------------------
+    # PAGINAS 3..N : OEE Y GRÁFICA INDIVIDUAL POR MÁQUINA
+    # ---------------------------------------------------------
+    for g in GRUPOS_ESTAMPADO + GRUPOS_SOLDADURA:
+        maquinas_grupo = sorted(df_met_all[df_met_all['Grupo'] == g]['Máquina'].unique())
+        for maq in maquinas_grupo:
+            pdf.add_page() 
+            pdf.set_font("Times", 'B', 16)
+            pdf.set_text_color(*theme_color)
+            pdf.cell(0, 10, clean_text(f"REPORTE ESPECÍFICO DE MÁQUINA: {maq}"), ln=True, border='B')
+            
+            pdf.set_font("Arial", 'I', 10); pdf.set_text_color(100, 100, 100)
+            pdf.cell(0, 6, clean_text(f"Grupo perteneciente: {g}"), ln=True)
+            pdf.ln(5)
+            
+            row_maq = df_met_all[df_met_all['Máquina'] == maq].iloc[0]
+            y_curr = draw_kpi_row(pdf, pdf.get_y(), "INDICADORES DEL MES", row_maq['OEE'], row_maq['DISPONIBILIDAD'], row_maq['PERFORMANCE'], row_maq['CALIDAD'], theme_color)
+            
+            if not df_trend.empty:
+                df_t_maq = df_trend[df_trend['Máquina'] == maq].copy()
+                if not df_t_maq.empty:
+                    df_t_maq['OEE'] = (df_t_maq['OEE_Num'] / df_t_maq['OEE_Den']).fillna(0)
+                    df_t_maq['DISP'] = (df_t_maq['Disp_Num'] / df_t_maq['OEE_Den']).fillna(0)
+                    df_t_maq['PERF'] = (df_t_maq['Perf_Num'] / df_t_maq['T_Operativo']).fillna(0)
+                    df_t_maq['CAL'] = (df_t_maq['Cal_Num'] / df_t_maq['Piezas_Totales']).fillna(0)
+                    
+                    df_t_maq_melt = df_t_maq.melt(id_vars=['Month'], value_vars=['OEE', 'DISP', 'PERF', 'CAL'], var_name='Indicador', value_name='Valor')
+                    df_t_maq_melt['Mes_Nombre'] = df_t_maq_melt['Month'].map(meses_map)
+                    if df_t_maq_melt['Valor'].max() <= 10.0 and df_t_maq_melt['Valor'].max() > 0:
+                        df_t_maq_melt['Valor'] = df_t_maq_melt['Valor'] * 100
+                    
+                    fig_m = px.bar(
+                        df_t_maq_melt, x='Mes_Nombre', y='Valor', color='Indicador',
+                        barmode='group', text_auto='.0f',
+                        color_discrete_map={'OEE': '#2C3E50', 'DISP': '#2980B9', 'PERF': '#F39C12', 'CAL': '#27AE60'}
+                    )
+                    fig_m.update_layout(
+                        height=350, width=700, margin=dict(t=30, b=20, l=20, r=20),
+                        yaxis_title='Porcentaje (%)', xaxis_title='', title=f'Evolución Mensual - {maq}',
+                        plot_bgcolor='rgba(0,0,0,0)', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                    )
+                    fig_m.update_yaxes(range=[0, 110])
+                    
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_m:
+                        fig_m.write_image(tmp_m.name, engine="kaleido")
+                        pdf.set_y(y_curr + 15)
+                        add_image_safe(pdf, tmp_m.name, w_mm=170, h_mm=85, center=True)
+                        os.remove(tmp_m.name)
+
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
-# 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL
+# 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL (FAMMA con formato FUMISCOR)
 # ==========================================
-def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_tipo, df_trend, df_metrics_pdf, df_horarios, override_estampado=False, df_metrics_ORIG=None, df_prod_ORIG=None):
+def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_tipo, df_trend, df_metrics_pdf, df_horarios):
     if area.upper() == "ESTAMPADO":
         theme_color = (15, 76, 129); comp_color = (52, 152, 219)  
         chart_bars = ['#003366', '#3498DB', '#AED6F1']; pie_colors = px.colors.sequential.Blues_r
@@ -639,62 +721,36 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     pdf.ln(10); pdf.set_font("Times", 'B', 18); pdf.set_text_color(*theme_color)
     pdf.cell(0, 10, clean_text("ÍNDICE DEL REPORTE"), ln=True, align='C')
     pdf.ln(10); pdf.set_font("Arial", 'U', 11); pdf.set_text_color(*comp_color)
+        
     for g in grupos_area:
         pdf.cell(0, 7, clean_text(f">> Grupo {g} - Resumen General del Área"), ln=True, link=links_resumen_grupo[g])
-        pdf.cell(0, 7, clean_text(f"      -> Ir al Detalle Individual Máquina a Máquina"), ln=True, link=links_detalle_grupo[g])
+        pdf.cell(0, 7, clean_text(f"      -> Ir al Cuadro Resumen por Máquinas"), ln=True, link=links_detalle_grupo[g])
         pdf.ln(1)
     pdf.ln(4)
     pdf.cell(0, 8, clean_text(">> Performance General de Operarios"), ln=True, link=link_perfo)
     pdf.cell(0, 8, clean_text(">> Tablas de Tiempos Acumulados de Descanso"), ln=True, link=link_tiempos)
+
+    if df_pdf.empty:
+        pdf.add_page(); pdf.set_font("Arial", 'I', 12); pdf.set_text_color(100)
+        pdf.cell(0, 10, f"No hay datos registrados para la fabrica {area} en este periodo.", ln=True)
+        return pdf.output(dest='S').encode('latin-1')
 
     def obtener_metricas_maquina(maq_name):
         maq_row = df_metrics_pdf[df_metrics_pdf['Máquina'] == maq_name]
         if maq_row.empty: return None
         r = maq_row.iloc[0]
         return {
-            'OEE': r['OEE'], 'DISPONIBILIDAD': r['DISPONIBILIDAD'], 
-            'PERFORMANCE': r['PERFORMANCE'], 'CALIDAD': r['CALIDAD'], 
+            'OEE': r['OEE'] * 100 if r['OEE'] <= 1 else r['OEE'], 
+            'DISPONIBILIDAD': r['DISPONIBILIDAD'] * 100 if r['DISPONIBILIDAD'] <= 1 else r['DISPONIBILIDAD'], 
+            'PERFORMANCE': r['PERFORMANCE'] * 100 if r['PERFORMANCE'] <= 1 else r['PERFORMANCE'], 
+            'CALIDAD': r['CALIDAD'] * 100 if r['CALIDAD'] <= 1 else r['CALIDAD'], 
             'T_Planificado': (r['T_Operativo'] + r['T_Parada']) if pd.notna(r['T_Operativo']) else 0,
             'T_Operativo': r['T_Operativo'] if pd.notna(r['T_Operativo']) else 0, 
             'Buenas': r['Buenas'] if pd.notna(r['Buenas']) else 0, 
             'Totales': (r['Buenas'] + r['Retrabajo'] + r['Observadas']) if pd.notna(r['Buenas']) else 0
         }
 
-    def dibujar_tabla_eventos_detallada(df_subset, col_detalle, titulo, color_t):
-        if not df_subset.empty:
-            check_space(pdf, 25); pdf.set_font("Arial", 'B', 9); pdf.set_text_color(*color_t)
-            pdf.cell(0, 6, clean_text(f">> {titulo}:"), ln=True); pdf.ln(1)
-            def dibujar_cabeceras():
-                setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
-                pdf.cell(15, 6, "Fecha", 1, 0, 'C', True)
-                pdf.cell(12, 6, "Ini.", 1, 0, 'C', True)
-                pdf.cell(12, 6, "Fin", 1, 0, 'C', True)
-                pdf.cell(106, 6, "Detalle Registrado en Sistema", 1, 0, 'L', True)
-                pdf.cell(12, 6, "Min", 1, 0, 'C', True)
-                pdf.cell(33, 6, "Operador", 1, 1, 'L', True)
-            
-            dibujar_cabeceras(); setup_table_row(pdf); pdf.set_font("Arial", '', 8)
-            df_subset['_sort_time'] = df_subset['Inicio_Str'].apply(lambda x: parse_time_to_mins(x) if pd.notna(x) else 9999)
-            df_subset = df_subset.sort_values(['Fecha_Filtro', '_sort_time'], ascending=[True, True])
-            for _, row in df_subset.iterrows():
-                if pdf.get_y() > 265:
-                    pdf.add_page(); dibujar_cabeceras(); setup_table_row(pdf); pdf.set_font("Arial", '', 8)
-                val_fecha = pd.to_datetime(row['Fecha_Filtro']).strftime('%d/%m') if pd.notna(row['Fecha_Filtro']) else "-"
-                val_inicio = str(row['Inicio_Str'])[:5] if pd.notna(row['Inicio_Str']) else "-"
-                val_fin = str(row['Fin_Str'])[:5] if pd.notna(row['Fin_Str']) else "-"
-                minutos = f"{row['Tiempo (Min)']:.0f}"
-                operador = " " + str(row['Operador'])[:15]
-                detalle_str = " " + str(row[col_detalle]) if col_detalle in row and pd.notna(row[col_detalle]) else " Sin detalle"
-                
-                pdf.cell(15, 5, val_fecha, 'B', 0, 'C')
-                pdf.cell(12, 5, val_inicio, 'B', 0, 'C')
-                pdf.cell(12, 5, val_fin, 'B', 0, 'C')
-                pdf.cell(106, 5, clean_text(detalle_str[:70]), 'B', 0, 'L')
-                pdf.cell(12, 5, minutos, 'B', 0, 'C')
-                pdf.cell(33, 5, clean_text(operador), 'B', 1, 'L')
-            pdf.ln(4)
-
-    # --- RECORRIDO POR CADA GRUPO ---
+    # RECORRIDO POR CADA GRUPO 
     for g in grupos_area:
         maq_del_grupo = sorted(list(set(df_pdf[df_pdf['Grupo_Máquina'] == g]['Máquina'].tolist() + df_prod_pdf[df_prod_pdf['Grupo_Máquina'] == g]['Máquina'].tolist())))
         df_pdf_g = df_pdf[df_pdf['Máquina'].isin(maq_del_grupo)]
@@ -704,35 +760,45 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         pdf.set_font("Times", 'B', 16); pdf.set_text_color(*theme_color)
         pdf.cell(0, 10, clean_text(f"SECCIÓN GRUPO: {g}"), ln=True, align='L', border='B'); pdf.ln(5)
 
-        # 1. RESUMEN OEE GRUPAL
-        print_section_title(pdf, "1. Resumen OEE del Grupo", theme_color)
-        g_plan = 0; g_op = 0; g_buenas = 0; g_totales = 0; g_disp_w = 0; g_perf_w = 0; g_oee_w = 0
+        # 1. RESUMEN OEE DEL GRUPO
+        check_space(pdf, 30); print_section_title(pdf, "1. Resumen OEE del Grupo", theme_color)
+        g_plan = 0; g_op = 0; g_buenas = 0; g_totales = 0
+        g_disp_w = 0; g_perf_w = 0; g_oee_w = 0
         maquinas_metricas = {}
-        for maq in maq_del_grupo:
-            m = obtener_metricas_maquina(maq)
-            if m:
-                maquinas_metricas[maq] = m
-                tp = m['T_Planificado'] if m['T_Planificado'] > 0 or not override_estampado else 1
-                to = m['T_Operativo'] if m['T_Operativo'] > 0 or not override_estampado else 1
-                g_plan += tp; g_op += to; g_buenas += m['Buenas']; g_totales += m['Totales']
-                g_disp_w += m['DISPONIBILIDAD'] * tp; g_perf_w += m['PERFORMANCE'] * to; g_oee_w += m['OEE'] * tp
         
-        g_oee = g_oee_w / g_plan if g_plan > 0 else 0
-        print_pdf_metric_row(pdf, f"Total {g}", {'OEE': g_oee, 'DISPONIBILIDAD': g_disp_w/g_plan if g_plan>0 else 0, 'PERFORMANCE': g_perf_w/g_op if g_op>0 else 0, 'CALIDAD': g_buenas/g_totales if g_totales>0 else 0})
-        for maq, metrics in maquinas_metricas.items(): print_pdf_metric_row(pdf, f"    > {maq}", metrics)
-        pdf.ln(5)
+        for maq in maq_del_grupo:
+            metrics = obtener_metricas_maquina(maq)
+            if metrics:
+                maquinas_metricas[maq] = metrics
+                t_p = metrics['T_Planificado']; t_o = metrics['T_Operativo']
+                g_plan += t_p; g_op += t_o
+                g_buenas += metrics['Buenas']; g_totales += metrics['Totales']
+                
+                g_disp_w += metrics['DISPONIBILIDAD'] * t_p
+                g_perf_w += metrics['PERFORMANCE'] * t_o
+                g_oee_w += metrics['OEE'] * t_p
+                
+        g_disp = g_disp_w / g_plan if g_plan > 0 else 0
+        g_perf = g_perf_w / g_op if g_op > 0 else 0
+        g_cal = (g_buenas / g_totales) * 100 if g_totales > 0 else 0 
+        g_oee = g_oee_w / g_plan if g_plan > 0 else 0 
+        
+        m_g = {'OEE': g_oee, 'DISPONIBILIDAD': g_disp, 'PERFORMANCE': g_perf, 'CALIDAD': g_cal}
+        print_pdf_metric_row(pdf, f"Total {g}", m_g)
+        
+        for maq, metrics in maquinas_metricas.items():
+            print_pdf_metric_row(pdf, f"    > {maq}", metrics)
+        pdf.ln(3)
 
-        # 2. Gráficos Evolución o KPIs
+        # 2. GRÁFICOS DE EVOLUCIÓN (MENSUAL) O KPIS POR MÁQUINA (DIARIO/SEMANAL)
+        # ESTILO FUMISCOR: fluye directamente sin forzar saltos de página extraños
         if p_tipo == "Mensual":
-            check_space(pdf, 80)
             print_section_title(pdf, "2. Evolución Histórica OEE por Máquina", theme_color)
-            
             if not df_trend.empty:
                 df_trend_g = df_trend[df_trend['Máquina'].isin(maq_del_grupo)].copy()
                 if not df_trend_g.empty:
                     if df_trend_g['OEE'].max() <= 10.0:
                         df_trend_g['OEE'] = df_trend_g['OEE'] * 100
-                    
                     meses_map = {1:'Ene', 2:'Feb', 3:'Mar', 4:'Abr', 5:'May', 6:'Jun', 7:'Jul', 8:'Ago', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dic'}
                     df_trend_g['Mes_Nombre'] = df_trend_g['Month'].map(meses_map)
                     
@@ -741,7 +807,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                         barmode='group', text_auto='.1f', color_discrete_sequence=px.colors.qualitative.Prism
                     )
                     fig_trend_oee.update_layout(
-                        height=350, width=800, margin=dict(t=20, b=20, l=20, r=20),
+                        height=180, width=800, margin=dict(t=15, b=15, l=20, r=20),
                         yaxis_title='OEE (%)', xaxis_title='', legend_title='Máquinas', 
                         plot_bgcolor='rgba(0,0,0,0)', yaxis=dict(range=[0, 110])
                     )
@@ -752,21 +818,20 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                         pdf.image(tmp_oee.name, x=10, y=y_base, w=190)
                         os.remove(tmp_oee.name)
                         
-                    pdf.set_y(y_base + 90); pdf.ln(2)
+                    pdf.set_y(y_base + 52); pdf.ln(2)
                 else:
                     pdf.set_font("Arial", 'I', 9); pdf.cell(0, 6, clean_text("No hay datos históricos para graficar en este grupo."), ln=True)
             else:
                 pdf.set_font("Arial", 'I', 9); pdf.cell(0, 6, clean_text("No hay datos de evolución para graficar en este periodo."), ln=True)
         
         else: # Semanal o Diario
-            check_space(pdf, 80)
             print_section_title(pdf, f"2. Comparativa de KPIs entre Máquinas ({p_tipo})", theme_color)
-            
             df_m_g = df_metrics_pdf[df_metrics_pdf['Máquina'].isin(maq_del_grupo)].copy()
             if not df_m_g.empty:
                 df_m_g_melt = df_m_g.melt(id_vars=['Máquina'], value_vars=['OEE', 'DISPONIBILIDAD', 'PERFORMANCE', 'CALIDAD'], var_name='Indicador', value_name='Valor')
                 
-                df_m_g_melt['Valor'] = df_m_g_melt['Valor'] * 100
+                if df_m_g_melt['Valor'].max() <= 10.0:
+                    df_m_g_melt['Valor'] = df_m_g_melt['Valor'] * 100
                 
                 fig_kpis = px.bar(
                     df_m_g_melt, x='Indicador', y='Valor', color='Máquina', 
@@ -774,7 +839,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                     color_discrete_sequence=px.colors.qualitative.Prism
                 )
                 fig_kpis.update_layout(
-                    height=350, width=800, margin=dict(t=20, b=20, l=20, r=20),
+                    height=180, width=800, margin=dict(t=15, b=15, l=20, r=20),
                     yaxis_title='Porcentaje (%)', xaxis_title='', 
                     plot_bgcolor='rgba(0,0,0,0)', yaxis=dict(range=[0, 110]),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title="")
@@ -786,13 +851,13 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                     pdf.image(tmp_kpi.name, x=10, y=y_base, w=190)
                     os.remove(tmp_kpi.name)
                     
-                pdf.set_y(y_base + 90); pdf.ln(2)
+                pdf.set_y(y_base + 52); pdf.ln(2)
             else:
                 pdf.set_font("Arial", 'I', 9); pdf.cell(0, 6, clean_text("No hay datos de KPIs para graficar en este periodo."), ln=True)
 
         # 3. HORARIOS (SOLO DIARIO/SEMANAL)
         if p_tipo in ["Diario", "Semanal"]:
-            check_space(pdf, 25); print_section_title(pdf, "3. Horarios y Tiempo de Apertura", theme_color)
+            print_section_title(pdf, "3. Horarios y Tiempo de Apertura", theme_color)
             setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
 
             if not df_horarios.empty:
@@ -817,6 +882,12 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
 
                         grouped = df_horarios_grupo.groupby(['Máquina', 'Turno'])
                         for (maq_name, turno), group in grouped:
+                            if pdf.get_y() > 265: 
+                                pdf.add_page(); setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
+                                pdf.cell(w_maq, 6, "Maquina", 1, 0, 'C', True); pdf.cell(w_tur, 6, "Turno", 1, 0, 'C', True)
+                                for d in dias: pdf.cell(w_day, 6, d, 1, 0 if d != "Viernes" else 1, 'C', True)
+                                setup_table_row(pdf); pdf.set_font("Arial", '', 8)
+
                             pdf.cell(w_maq, 5, " " + clean_text(maq_name), 1, 0, 'L')
                             pdf.cell(w_tur, 5, clean_text(turno), 1, 0, 'C')
 
@@ -840,6 +911,13 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
 
                         setup_table_row(pdf); pdf.set_font("Arial", '', 8)
                         for _, r_hor in df_horarios_grupo.sort_values(['Máquina', 'Turno']).iterrows():
+                            if pdf.get_y() > 265: 
+                                pdf.add_page(); setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
+                                pdf.cell(w_maq, 6, "Maquina", 1, 0, 'C', True); pdf.cell(w_tur, 6, "Turno", 1, 0, 'C', True)
+                                pdf.cell(w_hor, 6, "Hora Inicio", 1, 0, 'C', True); pdf.cell(w_hor, 6, "Hora Cierre", 1, 0, 'C', True)
+                                pdf.cell(w_tie, 6, "Apertura Neta", 1, 0, 'C', True); pdf.cell(w_tie, 6, "No Registrado", 1, 1, 'C', True)
+                                setup_table_row(pdf); pdf.set_font("Arial", '', 8)
+
                             pdf.cell(w_maq, 5, " " + clean_text(r_hor['Máquina']), 1, 0, 'L')
                             pdf.cell(w_tur, 5, clean_text(r_hor['Turno']), 1, 0, 'C')
                             
@@ -895,7 +973,10 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         pdf.cell(38, 5, clean_text(mins_to_duration_str(t_proy_g)), border=1, align='C')
         pdf.cell(38, 5, clean_text(mins_to_duration_str(t_desc_g)), border=1, align='C', ln=True); pdf.ln(4)
         
-        # --- Desglose de Fallas del Grupo ---
+        # --- Análisis de Fallas + Tortas agrupadas juntas (Formato Fumiscor sin cortes extras) ---
+        check_space(pdf, 170)
+        print_section_title(pdf, "Análisis de Fallas, Tendencias y Estructura Visual", theme_color)
+
         df_g_fallas = df_pdf_g[df_pdf_g['Estado_Global'] == 'Falla/Gestión'].copy()
         if not df_g_fallas.empty:
             agg_f15 = df_g_fallas.groupby('Detalle_Final')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False).head(15)
@@ -911,7 +992,6 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             trend_df = df_g_fallas.groupby(['Eje_Temp', 'Máquina'])['Tiempo (Min)'].sum().reset_index()
             trend_df = trend_df.sort_values('Eje_Temp')
             
-            if pdf.get_y() + 65 > 275: pdf.add_page()
             pdf.set_font("Arial", 'B', 10); pdf.set_text_color(*comp_color)
             pdf.cell(95, 6, clean_text("> Top 15 Fallas del Grupo (por tiempo):"), 0, 0, 'L')
             pdf.cell(95, 6, clean_text("> Tendencia Temporal de Fallas (Minutos):"), 0, 1, 'L')
@@ -937,60 +1017,14 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 
             pdf.set_y(y_base_graficos + 60); pdf.ln(2)
 
-        # --- Desglose de Paradas Programadas del Grupo ---
-        df_g_paradas = df_pdf_g[df_pdf_g['Estado_Global'] == 'Parada Programada'].copy()
-        if not df_g_paradas.empty:
-            if pdf.get_y() > 180: pdf.add_page()
-            pdf.set_font("Arial", 'B', 10); pdf.set_text_color(*theme_color) 
-            pdf.cell(95, 6, clean_text("> SMED / Paradas Programadas Grupo:"), 0, 0, 'L')
-            pdf.cell(95, 6, clean_text("> Tendencia Temporal (Minutos):"), 0, 1, 'L')
-            
-            y_base_p = pdf.get_y()
-            
-            resumen_p = df_g_paradas.groupby('Detalle_Final').agg(Cantidad=('Tiempo (Min)', 'count'), Total_Min=('Tiempo (Min)', 'sum')).reset_index()
-            resumen_p['Promedio_Min'] = resumen_p['Total_Min'] / resumen_p['Cantidad']
-            resumen_p = resumen_p.sort_values('Total_Min', ascending=False)
-            
-            if p_tipo == "Diario":
-                df_g_paradas['Eje_Temp'] = pd.to_datetime(df_g_paradas['Inicio']).dt.strftime('%H:00')
-            else:
-                df_g_paradas['Eje_Temp'] = pd.to_datetime(df_g_paradas['Fecha_Filtro']).dt.strftime('%d/%m')
-                
-            trend_p = df_g_paradas.groupby(['Eje_Temp', 'Máquina'])['Tiempo (Min)'].sum().reset_index()
-            trend_p = trend_p.sort_values('Eje_Temp')
-            
-            fig_trend_p = px.line(trend_p, x='Eje_Temp', y='Tiempo (Min)', color='Máquina', markers=True, color_discrete_sequence=px.colors.qualitative.Safe)
-            fig_trend_p.update_layout(height=320, width=420, margin=dict(t=10, b=100, l=40, r=10), plot_bgcolor='rgba(0,0,0,0)', xaxis_title="", yaxis_title="Total Minutos", legend=dict(orientation="h", yanchor="top", y=-0.3, xanchor="center", x=0.5, font=dict(size=8), title=""))
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_trend_p:
-                fig_trend_p.write_image(tmp_trend_p.name, engine="kaleido")
-                pdf.image(tmp_trend_p.name, x=105, y=y_base_p, w=100)
-                os.remove(tmp_trend_p.name)
-                
-            pdf.set_y(y_base_p + 2)
-            setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
-            pdf.cell(50, 5, "Evento", 1, 0, 'C', True); pdf.cell(12, 5, "Cant.", 1, 0, 'C', True); pdf.cell(16, 5, "Total", 1, 0, 'C', True); pdf.cell(16, 5, "Prom.", 1, 1, 'C', True)
-            setup_table_row(pdf); pdf.set_font("Arial", '', 7)
-            max_y_tab = pdf.get_y()
-            
-            for _, rp in resumen_p.head(10).iterrows():
-                pdf.cell(50, 4.5, " " + clean_text(rp['Detalle_Final'])[:33], 'B', 0, 'L')
-                pdf.cell(12, 4.5, str(int(rp['Cantidad'])), 'B', 0, 'C')
-                pdf.cell(16, 4.5, f"{rp['Total_Min']:.0f}m", 'B', 0, 'C')
-                pdf.cell(16, 4.5, f"{rp['Promedio_Min']:.1f}m", 'B', 1, 'C')
-                max_y_tab = pdf.get_y()
-                
-            pdf.set_y(max(max_y_tab, y_base_p + 75) + 5)
-
-        # 5. RESUMEN VISUAL DE TIEMPOS DEL GRUPO (FORZA SALTO DE PAGINA)
+        # Tortas de Estructura Visual
         resumen_global = df_pdf_g.groupby('Estado_Global')['Tiempo (Min)'].sum().reset_index() if not df_pdf_g.empty else pd.DataFrame()
         total_global = resumen_global['Tiempo (Min)'].sum() if not resumen_global.empty else 0
-
-        pdf.add_page() # Fuerza página limpia única garantizando que no se encime
-        num_section_visual = "4." if p_tipo == "Mensual" else "5."
         
         if total_global > 0:
+            num_section_visual = "4." if p_tipo == "Mensual" else "5."
             print_section_title(pdf, f"{num_section_visual} Resumen Visual de Tiempos del Grupo", theme_color); y_base = pdf.get_y()
+            
             fig_g = px.pie(resumen_global, values='Tiempo (Min)', names='Estado_Global', hole=0.4, title="Estructura de Tiempos (Hs)", color_discrete_sequence=pie_colors)
             fig_g.update_traces(textinfo='percent+label', textposition='outside', textfont_size=11)
             fig_g.update_layout(width=420, height=300, margin=dict(t=40, b=50, l=80, r=80), showlegend=False, plot_bgcolor='rgba(0,0,0,0)')
@@ -1015,11 +1049,13 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             os.remove(tmp1.name)
             pdf.set_y(y_base + 75); pdf.ln(2)
         else:
+            num_section_visual = "4." if p_tipo == "Mensual" else "5."
             print_section_title(pdf, f"{num_section_visual} Resumen Visual de Tiempos del Grupo", theme_color)
             pdf.set_font("Arial", 'I', 9); pdf.set_text_color(100, 100, 100); pdf.cell(0, 6, clean_text("No hay datos de tiempo suficientes para generar gráficos de torta."), ln=True); pdf.ln(5)
 
-
-        # --- EMPIEZA LA SEGUNDA PARTE DEL GRUPO: DETALLE INDIVIDUAL MÁQUINA A MÁQUINA ---
+        # -----------------------------------------------------------------
+        # CUADRO RESUMEN POR MÁQUINAS (Fluye naturalmente)
+        # -----------------------------------------------------------------
         maquinas_con_tiempo = []
         if not df_pdf_g.empty:
             for maq in sorted(df_pdf_g['Máquina'].unique()):
@@ -1028,162 +1064,114 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 if t_total > 0: maquinas_con_tiempo.append(maq)
 
         if maquinas_con_tiempo:
-            pdf.add_page()
-            pdf.set_link(links_detalle_grupo[g]) # Destino del segundo hipervínculo del índice
-            pdf.set_font("Times", 'B', 16)
-            pdf.set_text_color(*theme_color)
-            pdf.cell(0, 10, clean_text(f"DESGLOSE DETALLADO POR MÁQUINA - GRUPO {g}"), ln=True, border='B')
-            pdf.ln(5)
-            
+            check_space(pdf, 40)
+            pdf.set_link(links_detalle_grupo[g])
+            print_section_title(pdf, f"Cuadro Resumen por Máquinas - Grupo {g}", theme_color)
+
+            def dibujar_cabeza_resumen_maq():
+                setup_table_header(pdf, theme_color)
+                pdf.set_font("Arial", 'B', 7)
+                pdf.cell(25, 6, "MAQUINA", 1, 0, 'C', True)
+                pdf.cell(20, 6, "PRODUCCION", 1, 0, 'C', True)
+                pdf.cell(15, 6, "FALLAS", 1, 0, 'C', True)
+                pdf.cell(20, 6, "PARADA PROG.", 1, 0, 'C', True)
+                pdf.cell(18, 6, "DESCANSO", 1, 0, 'C', True)
+                pdf.cell(22, 6, "TIEMPO NO REG.", 1, 0, 'C', True)
+                pdf.cell(70, 6, "TOP 3 FALLAS.", 1, 1, 'C', True)
+
+            dibujar_cabeza_resumen_maq()
+            setup_table_row(pdf)
+            pdf.set_font("Arial", '', 7)
+
+            fill_toggle = False
+
             for maq in maquinas_con_tiempo:
-                if p_tipo in ["Mensual", "Semanal"]:
-                    pdf.add_page()
-                else:
-                    check_space(pdf, 50)
-                
                 df_maq = df_pdf_g[df_pdf_g['Máquina'] == maq]
                 t_prod = df_maq[df_maq['Estado_Global'] == 'Producción']['Tiempo (Min)'].sum()
                 t_falla = df_maq[df_maq['Estado_Global'] == 'Falla/Gestión']['Tiempo (Min)'].sum()
                 t_parada = df_maq[df_maq['Estado_Global'] == 'Parada Programada']['Tiempo (Min)'].sum()
-                t_proy = df_maq[df_maq['Estado_Global'] == 'Proyecto']['Tiempo (Min)'].sum()
                 t_desc = df_maq[df_maq['Estado_Global'] == 'Descanso']['Tiempo (Min)'].sum()
-                
-                pdf.set_font("Arial", 'B', 12); pdf.set_text_color(255, 255, 255); pdf.set_fill_color(*comp_color)
-                pdf.cell(0, 8, clean_text(f"  MÁQUINA: {maq}"), border=0, ln=True, fill=True)
-                pdf.set_font("Arial", 'I', 8); pdf.set_text_color(120, 120, 120); pdf.cell(0, 5, clean_text(f"  Grupo: {g}"), border=0, ln=True); pdf.ln(2)
-                
-                setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
-                for col_name in ["Produccion", "Fallas/Gestion", "Paradas Prog.", "Proyecto", "Descansos"]: pdf.cell(38, 6, col_name, border=1, align='C', fill=True)
-                pdf.ln(); setup_table_row(pdf); pdf.set_font("Arial", '', 9)
-                pdf.cell(38, 5, clean_text(mins_to_duration_str(t_prod)), border=1, align='C')
-                pdf.cell(38, 5, clean_text(mins_to_duration_str(t_falla)), border=1, align='C')
-                pdf.cell(38, 5, clean_text(mins_to_duration_str(t_parada)), border=1, align='C')
-                pdf.cell(38, 5, clean_text(mins_to_duration_str(t_proy)), border=1, align='C')
-                pdf.cell(38, 5, clean_text(mins_to_duration_str(t_desc)), border=1, align='C', ln=True); pdf.ln(4)
-                
+
+                # Cálculo de tiempo no registrado por turno
+                total_noreg = 0
+                for (fecha, turno), grp_t in df_maq.groupby(['Fecha_Filtro', 'Turno']):
+                    intervals = []
+                    for _, r in grp_t.iterrows():
+                        ini = parse_time_to_mins(r['Inicio_Str'])
+                        fin = parse_time_to_mins(r['Fin_Str'])
+                        if ini is not None and fin is not None:
+                            if fin < ini and (ini - fin) > 720: fin += 1440
+                            intervals.append([ini, fin])
+                    if intervals:
+                        intervals.sort(key=lambda x: x[0])
+                        merged = [intervals[0]]
+                        for current in intervals[1:]:
+                            last = merged[-1]
+                            if current[0] <= last[1]: last[1] = max(last[1], current[1])
+                            else: merged.append(current)
+                        total_active = sum(iv[1] - iv[0] for iv in merged)
+                        tiempo_bruto = merged[-1][1] - merged[0][0]
+                        total_noreg += max(0, tiempo_bruto - total_active)
+
                 df_maq_fallas = df_maq[df_maq['Estado_Global'] == 'Falla/Gestión']
+                top3_fallas = []
+                if not df_maq_fallas.empty:
+                    agg_f = df_maq_fallas.groupby('Detalle_Final')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False).head(3)
+                    for _, r in agg_f.iterrows():
+                        top3_fallas.append(f"- {str(r['Detalle_Final']).strip()[:42]} ({r['Tiempo (Min)']:.0f}m)")
                 
-                if p_tipo in ["Mensual", "Semanal"]:
-                    if not df_maq_fallas.empty:
-                        agg_f15 = df_maq_fallas.groupby('Detalle_Final')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False).head(15)
-                        agg_f15 = agg_f15.sort_values('Tiempo (Min)', ascending=True) 
-                        agg_f15['Label'] = agg_f15.apply(lambda r: f" {str(r['Detalle_Final'])[:60]} — {r['Tiempo (Min)']:.0f}m", axis=1)
-                        max_x_val = max_x_val = agg_f15['Tiempo (Min)'].max() if not agg_f15.empty else 1
-                        
-                        trend_df = df_maq_fallas.groupby('Fecha_Filtro')['Tiempo (Min)'].sum().reset_index()
-                        trend_df['Fecha_Filtro'] = pd.to_datetime(trend_df['Fecha_Filtro']).sort_values()
-                        
-                        if pdf.get_y() + 65 > 275: pdf.add_page()
-                        
-                        pdf.set_font("Arial", 'B', 10); pdf.set_text_color(*comp_color)
-                        pdf.cell(95, 6, clean_text("> Top 15 Fallas (por tiempo):"), 0, 0, 'L')
-                        pdf.cell(95, 6, clean_text("> Tendencia Diaria de Fallas (Minutos):"), 0, 1, 'L')
-                        
-                        y_base_graficos = pdf.get_y()
-                        
-                        fig_top15 = px.bar(agg_f15, x='Tiempo (Min)', y='Detalle_Final', orientation='h', text='Label')
-                        fig_top15.update_traces(marker_color=hex_comp, textposition='outside', textfont=dict(size=11, color='black'), cliponaxis=False)
-                        fig_top15.update_layout(height=250, width=450, margin=dict(t=5, b=5, l=10, r=220), plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False, range=[0, max_x_val * 1.5]), yaxis=dict(title='', showticklabels=False))
-                        
-                        fig_trend = px.line(trend_df, x='Fecha_Filtro', y='Tiempo (Min)', markers=True)
-                        fig_trend.update_traces(line_color=hex_comp, marker=dict(size=8, color=hex_theme))
-                        fig_trend.update_xaxes(tickformat="%d/%m")
-                        fig_trend.update_layout(height=250, width=400, margin=dict(t=10, b=30, l=40, r=20), plot_bgcolor='rgba(0,0,0,0)', xaxis_title="", yaxis_title="Minutos")
-                        
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart:
-                            fig_top15.write_image(tmp_chart.name, engine="kaleido")
-                            pdf.image(tmp_chart.name, x=5, y=y_base_graficos, w=105)
-                            os.remove(tmp_chart.name)
-                            
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_trend:
-                            fig_trend.write_image(tmp_trend.name, engine="kaleido")
-                            pdf.image(tmp_trend.name, x=110, y=y_base_graficos, w=90)
-                            os.remove(tmp_trend.name)
-                            
-                        pdf.set_y(y_base_graficos + 60); pdf.ln(2)
-                else: 
-                    if not df_maq_fallas.empty:
-                        h_mm_top3 = 30
-                        if pdf.get_y() + 10 + h_mm_top3 > 270: pdf.add_page()
-                        pdf.set_font("Arial", 'B', 10); pdf.set_text_color(*comp_color)
-                        pdf.cell(0, 6, clean_text("> Top 3 Fallas (por tiempo):"), ln=True)
-                        agg_f = df_maq_fallas.groupby('Detalle_Final')['Tiempo (Min)'].sum().reset_index().sort_values('Tiempo (Min)', ascending=False).head(3)
-                        agg_f['Label'] = agg_f.apply(lambda r: f" {str(r['Detalle_Final'])[:60]} — {r['Tiempo (Min)']:.0f} min ({(r['Tiempo (Min)']/max(t_falla,1))*100:.1f}%)", axis=1)
-                        max_x_val = agg_f['Tiempo (Min)'].max() if not agg_f.empty else 1
-                        fig_top3 = px.bar(agg_f, x='Tiempo (Min)', y='Detalle_Final', orientation='h', text='Label')
-                        fig_top3.update_traces(marker_color=hex_comp, textposition='outside', textfont=dict(size=13, color='black'), cliponaxis=False)
-                        fig_top3.update_layout(height=140, width=700, margin=dict(t=5, b=5, l=10, r=220), plot_bgcolor='rgba(0,0,0,0)', xaxis=dict(visible=False, range=[0, max_x_val * 2.5]), yaxis=dict(title='', autorange="reversed", showticklabels=False))
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart:
-                            fig_top3.write_image(tmp_chart.name, engine="kaleido")
-                            add_image_safe(pdf, tmp_chart.name, w_mm=150, h_mm=h_mm_top3, center=False)
-                            os.remove(tmp_chart.name)
-                        
-                        dibujar_tabla_eventos_detallada(df_maq_fallas, 'Detalle_Final', "Detalle de Tiempos Perdidos", comp_color)
-                
-                # --- Paradas Programadas Individuales ---
-                df_maq_paradas = df_maq[df_maq['Estado_Global'] == 'Parada Programada']
-                if not df_maq_paradas.empty:
-                    if p_tipo in ["Mensual", "Semanal"]:
-                        if pdf.get_y() > 180: pdf.add_page()
-                        pdf.set_font("Arial", 'B', 10); pdf.set_text_color(*theme_color) 
-                        pdf.cell(95, 6, clean_text("> SMED/OTROS:"), 0, 0, 'L')
-                        pdf.cell(95, 6, clean_text("> Tendencia Diaria (Promedio en Minutos):"), 0, 1, 'L')
-                        
-                        y_base_p = pdf.get_y()
-                        
-                        resumen_p = df_maq_paradas.groupby('Detalle_Final').agg(Cantidad=('Tiempo (Min)', 'count'), Total_Min=('Tiempo (Min)', 'sum')).reset_index()
-                        resumen_p['Promedio_Min'] = resumen_p['Total_Min'] / resumen_p['Cantidad']
-                        resumen_p = resumen_p.sort_values('Total_Min', ascending=False)
-                        
-                        trend_p = df_maq_paradas.groupby(['Fecha_Filtro', 'Detalle_Final'])['Tiempo (Min)'].mean().reset_index()
-                        trend_p['Fecha_Filtro'] = pd.to_datetime(trend_p['Fecha_Filtro']).sort_values()
-                        trend_p['Detalle_Corto'] = trend_p['Detalle_Final'].apply(lambda x: str(x)[:25] + "..." if len(str(x)) > 25 else str(x))
-                        
-                        top_5_eventos = resumen_p.head(5)['Detalle_Final'].tolist()
-                        trend_p_filtrado = trend_p[trend_p['Detalle_Final'].isin(top_5_eventos)]
-                        
-                        fig_trend_p = px.line(trend_p_filtrado, x='Fecha_Filtro', y='Tiempo (Min)', color='Detalle_Corto', markers=True, color_discrete_sequence=px.colors.qualitative.Safe)
-                        fig_trend_p.update_xaxes(tickformat="%d/%m")
-                        fig_trend_p.update_layout(height=320, width=420, margin=dict(t=10, b=100, l=40, r=10), plot_bgcolor='rgba(0,0,0,0)', xaxis_title="", yaxis_title="Promedio Minutos", legend=dict(orientation="h", yanchor="top", y=-0.3, xanchor="center", x=0.5, font=dict(size=8), title=""))
-                        
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_trend_p:
-                            fig_trend_p.write_image(tmp_trend_p.name, engine="kaleido")
-                            pdf.image(tmp_trend_p.name, x=105, y=y_base_p, w=100)
-                            os.remove(tmp_trend_p.name)
-                            
-                        pdf.set_y(y_base_p + 2)
-                        setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
-                        pdf.cell(50, 5, "Evento", 1, 0, 'C', True); pdf.cell(12, 5, "Cant.", 1, 0, 'C', True); pdf.cell(16, 5, "Total", 1, 0, 'C', True); pdf.cell(16, 5, "Prom.", 1, 1, 'C', True)
-                        setup_table_row(pdf); pdf.set_font("Arial", '', 7)
-                        max_y_tab = pdf.get_y()
-                        
-                        for _, rp in resumen_p.head(10).iterrows():
-                            pdf.cell(50, 4.5, " " + clean_text(rp['Detalle_Final'])[:33], 'B', 0, 'L')
-                            pdf.cell(12, 4.5, str(int(rp['Cantidad'])), 'B', 0, 'C')
-                            pdf.cell(16, 4.5, f"{rp['Total_Min']:.0f}m", 'B', 0, 'C')
-                            pdf.cell(16, 4.5, f"{rp['Promedio_Min']:.1f}m", 'B', 1, 'C')
-                            max_y_tab = pdf.get_y()
-                            
-                        pdf.set_y(max(max_y_tab, y_base_p + 75) + 5)
-                        
-                        if p_tipo == "Semanal":
-                            dibujar_tabla_eventos_detallada(df_maq_paradas, 'Detalle_Final', "Detalle Cronológico Paradas Programadas", theme_color)
+                num_lines = max(1, len(top3_fallas))
+                row_h = num_lines * 5 
+
+                if pdf.get_y() + row_h > 265:
+                    pdf.add_page()
+                    dibujar_cabeza_resumen_maq()
+                    setup_table_row(pdf)
+                    pdf.set_font("Arial", '', 7)
+
+                if fill_toggle:
+                    if area.upper() == "ESTAMPADO":
+                        pdf.set_fill_color(235, 243, 250) 
                     else:
-                        dibujar_tabla_eventos_detallada(df_maq_paradas, 'Detalle_Final', "Paradas Programadas", theme_color)
+                        pdf.set_fill_color(253, 242, 233) 
+                else:
+                    pdf.set_fill_color(255, 255, 255)
 
+                x_pos = pdf.get_x()
+                y_pos = pdf.get_y()
 
-        # 6. PRODUCCIÓN POR GRUPO (MOVIDO AL FINAL DEL GRUPO EN SU PROPIA PAGINA)
+                pdf.cell(25, row_h, clean_text(maq)[:15], 1, 0, 'C', True)
+                pdf.cell(20, row_h, clean_text(mins_to_duration_str(t_prod)), 1, 0, 'C', True)
+                pdf.cell(15, row_h, clean_text(mins_to_duration_str(t_falla)), 1, 0, 'C', True)
+                pdf.cell(20, row_h, clean_text(mins_to_duration_str(t_parada)), 1, 0, 'C', True)
+                pdf.cell(18, row_h, clean_text(mins_to_duration_str(t_desc)), 1, 0, 'C', True)
+                pdf.cell(22, row_h, clean_text(mins_to_duration_str(total_noreg)), 1, 0, 'C', True)
+
+                x_fail = pdf.get_x()
+                y_fail = pdf.get_y()
+                pdf.rect(x_fail, y_fail, 70, row_h, 'DF') 
+
+                for idx, f_str in enumerate(top3_fallas):
+                    pdf.set_xy(x_fail + 1, y_fail + (idx * 5) + 0.5)
+                    pdf.cell(68, 4, clean_text(f_str), 0, 0, 'L')
+
+                pdf.set_xy(x_pos, y_pos + row_h)
+                fill_toggle = not fill_toggle
+            
+            pdf.ln(5)
+
+        # 6. PRODUCCIÓN POR GRUPO 
         df_prod_pdf_g = df_prod_pdf[df_prod_pdf['Grupo_Máquina'] == g] if not df_prod_pdf.empty else pd.DataFrame()
         if not df_prod_pdf_g.empty:
-            pdf.add_page()
+            check_space(pdf, 75)
             print_section_title(pdf, "Desglose de Producción del Grupo", theme_color)
             
             prod_maq = df_prod_pdf_g.groupby('Máquina')[['Buenas', 'Retrabajo', 'Observadas']].sum().reset_index()
             fig_prod = px.bar(prod_maq, x='Máquina', y=['Buenas', 'Retrabajo', 'Observadas'], barmode='stack', color_discrete_sequence=chart_bars, text_auto=True)
-            fig_prod.update_layout(width=800, height=300, margin=dict(t=20, b=40, l=20, r=20))
+            fig_prod.update_layout(width=800, height=220, margin=dict(t=15, b=25, l=20, r=20))
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile3:
                 fig_prod.write_image(tmpfile3.name, engine="kaleido")
-                add_image_safe(pdf, tmpfile3.name, w_mm=155, h_mm=58)
+                add_image_safe(pdf, tmpfile3.name, w_mm=155, h_mm=45)
                 os.remove(tmpfile3.name)
             
             pdf.ln(2)
@@ -1200,10 +1188,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             
             for maq_p in maquinas_prod:
                 df_m_prod = df_prod_pdf_g[df_prod_pdf_g['Máquina'] == maq_p].groupby('Código')[['Buenas', 'Retrabajo', 'Observadas']].sum().reset_index()
-                total_buenas = df_m_prod['Buenas'].sum()
-                total_retrabajo = df_m_prod['Retrabajo'].sum()
-                total_obs = df_m_prod['Observadas'].sum()
-                total_piezas = total_buenas + total_retrabajo + total_obs
+                total_piezas = df_m_prod['Buenas'].sum() + df_m_prod['Retrabajo'].sum() + df_m_prod['Observadas'].sum()
                 
                 check_space(pdf, 25)
                 pdf.set_font("Arial", 'B', 9); pdf.set_text_color(*theme_color)
@@ -1255,8 +1240,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                     for o in ops:
                         o = o.strip()
                         if o and o != '-':
-                            if o not in operador_maquinas:
-                                operador_maquinas[o] = set()
+                            if o not in operador_maquinas: operador_maquinas[o] = set()
                             operador_maquinas[o].add(maq)
 
             def dibujar_cabeza_oper():
@@ -1271,7 +1255,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             for _, row in df_filt.iterrows():
                 if pdf.get_y() > 270: 
                     pdf.add_page(); dibujar_cabeza_oper(); setup_table_row(pdf); pdf.set_font("Arial", '', 9)
-                perf_val = int(round(row['PERFORMANCE']))
+                perf_val = int(round(row['PERFORMANCE'] * 100)) if row['PERFORMANCE'] <= 1.5 else int(round(row['PERFORMANCE']))
                 
                 op_name = clean_text(str(row['Operador'])).strip()
                 if 'usuario' in op_name.lower() or 'admin' in op_name.lower(): continue
@@ -1283,10 +1267,8 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 pdf.cell(35, 5, " " + clean_text(str(row['Fábrica'])[:18]), 'B')
                 pdf.cell(85, 5, " " + clean_text(maq_str[:50]), 'B')
                     
-                if perf_val >= 90: 
-                    pdf.set_text_color(33, 195, 84) # Verde estricto
-                else: 
-                    pdf.set_text_color(220, 20, 20) # Rojo estricto
+                if perf_val >= 90: pdf.set_text_color(33, 195, 84)
+                else: pdf.set_text_color(220, 20, 20)
                     
                 pdf.cell(20, 5, f"{perf_val}%", 'B', 1, 'C'); pdf.set_text_color(50, 50, 50)
             pdf.ln(5)
@@ -1325,20 +1307,15 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 if pdf.get_y() > 270: 
                     pdf.add_page(); dibujar_cabeza_t(); setup_table_row(pdf); pdf.set_font("Arial", '', 9)
                 
-                # Checkeamos si superó el límite (Diario = Minutos totales, Semanal/Mensual = Promedio)
                 is_over = False
                 if p_tipo == "Diario":
-                    if r['Minutos'] > limite_minutos:
-                        is_over = True
+                    if r['Minutos'] > limite_minutos: is_over = True
                 else:
-                    if r['Promedio'] > limite_minutos:
-                        is_over = True
+                    if r['Promedio'] > limite_minutos: is_over = True
 
-                # Reseteamos color a negro para el operador
                 pdf.set_text_color(50, 50, 50)
                 pdf.cell(70, 5, " " + clean_text(r['Operador'])[:35], 'B')
                 
-                # Color de las métricas (rojo si supera)
                 if is_over: pdf.set_text_color(220, 20, 20)
                 else: pdf.set_text_color(50, 50, 50)
                 
@@ -1351,8 +1328,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 else: pdf.set_text_color(50, 50, 50)
                 
                 pdf.cell(40, 5, f"{r['Promedio']:.1f}", 'B', 1, 'C')
-                
-                pdf.set_text_color(50, 50, 50) # Reset final
+                pdf.set_text_color(50, 50, 50) 
             pdf.ln(5)
         else:
             pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay registros de tiempo acumulado para este ítem en el período."), ln=True)
