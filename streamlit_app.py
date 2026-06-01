@@ -1275,20 +1275,31 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     else:
         pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay datos de performance registrados para esta área en este período."), ln=True)
 
-    def agregar_tabla_tiempos(titulo, palabras_clave, limite_minutos):
+    def agregar_tabla_tiempos(titulo, palabras_clave, palabras_excluidas, limite_minutos):
         check_space(pdf, 25); print_section_title(pdf, titulo, theme_color)
         resumen_eventos = {}
+        
         if not df_pdf.empty:
-            mask = df_pdf[['Nivel Evento 1', 'Nivel Evento 2', 'Nivel Evento 3', 'Nivel Evento 4']].apply(
-                lambda row: any(isinstance(val, str) and any(kw in val.upper() for kw in palabras_clave) for val in row), axis=1)
+            def clasificar_fila(row):
+                # Unimos los textos de los niveles en un solo string
+                texto = " ".join([str(val).upper() for val in row if isinstance(val, str)])
+                tiene_clave = any(kw in texto for kw in palabras_clave)
+                tiene_excluida = any(ex in texto for ex in palabras_excluidas)
+                
+                # Condición estricta: debe tener la palabra clave y NO tener la palabra excluida
+                return tiene_clave and not tiene_excluida
+
+            mask = df_pdf[['Nivel Evento 1', 'Nivel Evento 2', 'Nivel Evento 3', 'Nivel Evento 4']].apply(clasificar_fila, axis=1)
             df_ev = df_pdf[mask]
+            
             for _, r in df_ev.iterrows():
                 t = float(r['Tiempo (Min)'])
                 for op in str(r['Operador']).split('/'):
                     op = op.strip()
                     if op and op != '-':
                         if op not in resumen_eventos: resumen_eventos[op] = {'tiempo': 0.0, 'cantidad': 0}
-                        resumen_eventos[op]['tiempo'] += t; resumen_eventos[op]['cantidad'] += 1
+                        resumen_eventos[op]['tiempo'] += t
+                        resumen_eventos[op]['cantidad'] += 1
 
         if resumen_eventos:
             df_res = pd.DataFrame([{'Operador': k, 'Minutos': v['tiempo'], 'Cantidad': v['cantidad']} for k, v in resumen_eventos.items()]).sort_values('Minutos', ascending=False)
@@ -1334,8 +1345,8 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay registros de tiempo acumulado para este ítem en el período."), ln=True)
 
     pdf.set_link(link_tiempos)
-    agregar_tabla_tiempos("Tiempo de Baño Acumulado", ["BAÑO", "BANO"], limite_minutos=8)
-    agregar_tabla_tiempos("Tiempo de Refrigerio Acumulado", ["REFRIGERIO"], limite_minutos=17)
+    agregar_tabla_tiempos("Tiempo de Baño Acumulado", ["BAÑO", "BANO"], ["REFRIGERIO"], limite_minutos=8)
+    agregar_tabla_tiempos("Tiempo de Refrigerio Acumulado", ["REFRIGERIO"], ["BAÑO", "BANO"], limite_minutos=17)
 
     return pdf.output(dest='S').encode('latin-1')
 
