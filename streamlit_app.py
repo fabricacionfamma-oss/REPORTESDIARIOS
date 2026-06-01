@@ -1275,21 +1275,18 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     else:
         pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay datos de performance registrados para esta área en este período."), ln=True)
 
-    def agregar_tabla_tiempos(titulo, palabras_clave, palabras_excluidas, limite_minutos):
+    def agregar_tabla_tiempos(titulo, palabras_clave, limite_minutos):
         check_space(pdf, 25); print_section_title(pdf, titulo, theme_color)
         resumen_eventos = {}
         
         if not df_pdf.empty:
-            def clasificar_fila(row):
-                # Unimos los textos de los niveles en un solo string
-                texto = " ".join([str(val).upper() for val in row if isinstance(val, str)])
-                tiene_clave = any(kw in texto for kw in palabras_clave)
-                tiene_excluida = any(ex in texto for ex in palabras_excluidas)
-                
-                # Condición estricta: debe tener la palabra clave y NO tener la palabra excluida
-                return tiene_clave and not tiene_excluida
+            # FILTRO EXACTO: Miramos SOLO la columna 'Detalle_Final' sin deduplicación
+            def clasificar_fila(val):
+                if pd.isna(val): return False
+                val_upper = str(val).upper()
+                return any(kw in val_upper for kw in palabras_clave)
 
-            mask = df_pdf[['Nivel Evento 1', 'Nivel Evento 2', 'Nivel Evento 3', 'Nivel Evento 4']].apply(clasificar_fila, axis=1)
+            mask = df_pdf['Detalle_Final'].apply(clasificar_fila)
             df_ev = df_pdf[mask]
             
             for _, r in df_ev.iterrows():
@@ -1344,9 +1341,14 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         else:
             pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay registros de tiempo acumulado para este ítem en el período."), ln=True)
 
+    # =========================================================================
+    # LLAMADAS FINALES PARA EL REPORTE
+    # =========================================================================
     pdf.set_link(link_tiempos)
-    agregar_tabla_tiempos("Tiempo de Baño Acumulado", ["BAÑO", "BANO"], ["REFRIGERIO"], limite_minutos=8)
-    agregar_tabla_tiempos("Tiempo de Refrigerio Acumulado", ["REFRIGERIO"], ["BAÑO", "BANO"], limite_minutos=17)
+    
+    # Busca solo en Detalle_Final
+    agregar_tabla_tiempos("Tiempo de Baño Acumulado", ["BAÑO", "BANO"], limite_minutos=8)
+    agregar_tabla_tiempos("Tiempo de Refrigerio Acumulado", ["REFRIGERIO"], limite_minutos=17)
 
     return pdf.output(dest='S').encode('latin-1')
 
