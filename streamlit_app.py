@@ -739,11 +739,17 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         maq_row = df_metrics_pdf[df_metrics_pdf['Máquina'] == maq_name]
         if maq_row.empty: return None
         r = maq_row.iloc[0]
+        
+        def escalar_porcentaje(val):
+            if pd.isna(val):
+                return 0.0
+            return float(val) * 100.0
+
         return {
-            'OEE': r['OEE'] * 100 if r['OEE'] <= 1 else r['OEE'], 
-            'DISPONIBILIDAD': r['DISPONIBILIDAD'] * 100 if r['DISPONIBILIDAD'] <= 1 else r['DISPONIBILIDAD'], 
-            'PERFORMANCE': r['PERFORMANCE'] * 100 if r['PERFORMANCE'] <= 1 else r['PERFORMANCE'], 
-            'CALIDAD': r['CALIDAD'] * 100 if r['CALIDAD'] <= 1 else r['CALIDAD'], 
+            'OEE': escalar_porcentaje(r['OEE']), 
+            'DISPONIBILIDAD': escalar_porcentaje(r['DISPONIBILIDAD']), 
+            'PERFORMANCE': escalar_porcentaje(r['PERFORMANCE']), 
+            'CALIDAD': escalar_porcentaje(r['CALIDAD']), 
             'T_Planificado': (r['T_Operativo'] + r['T_Parada']) if pd.notna(r['T_Operativo']) else 0,
             'T_Operativo': r['T_Operativo'] if pd.notna(r['T_Operativo']) else 0, 
             'Buenas': r['Buenas'] if pd.notna(r['Buenas']) else 0, 
