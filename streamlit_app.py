@@ -145,6 +145,9 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
                 df_op_raw['ProductiveTime'] = pd.to_numeric(df_op_raw['ProductiveTime'], errors='coerce').fillna(0)
                 df_op_raw['Perf_Num'] = df_op_raw['Performance'] * df_op_raw['ProductiveTime']
                 
+                # CORRECCIÓN AQUÍ PARA OPERARIOS
+                df_op_raw['Fábrica'] = df_op_raw['Fábrica'].fillna('No Asignada')
+                
                 df_op_target = df_op_raw.groupby(['Operador', 'Fábrica']).agg(
                     Perf_Num=('Perf_Num', 'sum'),
                     ProductiveTime=('ProductiveTime', 'sum')
@@ -1060,6 +1063,68 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             pdf.set_font("Arial", 'I', 9); pdf.set_text_color(100, 100, 100); pdf.cell(0, 6, clean_text("No hay datos de tiempo suficientes para generar gráficos de torta."), ln=True); pdf.ln(5)
 
         # -----------------------------------------------------------------
+        # DETALLE DE PARADAS PROGRAMADAS
+        # -----------------------------------------------------------------
+        check_space(pdf, 35)
+        print_section_title(pdf, "Detalle de Paradas Programadas", theme_color)
+
+        df_paradas_g = df_pdf_g[df_pdf_g['Estado_Global'] == 'Parada Programada'].copy()
+
+        if not df_paradas_g.empty:
+            df_paradas_g = df_paradas_g.sort_values(['Máquina', 'Inicio'])
+
+            def dibujar_cabeza_paradas():
+                setup_table_header(pdf, theme_color)
+                pdf.set_font("Arial", 'B', 8)
+                pdf.cell(35, 6, "Maquina", 1, 0, 'C', True)
+                pdf.cell(20, 6, "Inicio", 1, 0, 'C', True)
+                pdf.cell(20, 6, "Fin", 1, 0, 'C', True)
+                pdf.cell(25, 6, "Duracion", 1, 0, 'C', True)
+                pdf.cell(90, 6, "Descripcion de la Parada", 1, 1, 'C', True)
+
+            dibujar_cabeza_paradas()
+            setup_table_row(pdf)
+            pdf.set_font("Arial", '', 8)
+
+            fill_toggle_p = False
+            for _, r_par in df_paradas_g.iterrows():
+                if pdf.get_y() > 265:
+                    pdf.add_page()
+                    dibujar_cabeza_paradas()
+                    setup_table_row(pdf)
+                    pdf.set_font("Arial", '', 8)
+
+                if fill_toggle_p:
+                    if area.upper() == "ESTAMPADO":
+                        pdf.set_fill_color(235, 243, 250)
+                    else:
+                        pdf.set_fill_color(253, 242, 233)
+                else:
+                    pdf.set_fill_color(255, 255, 255)
+
+                maq_str = clean_text(str(r_par['Máquina']))[:18]
+                ini_str = clean_text(str(r_par['Inicio_Str']))
+                fin_str = clean_text(str(r_par['Fin_Str']))
+                dur_str = f"{r_par['Tiempo (Min)']:.0f} min"
+                desc_str = clean_text(str(r_par['Detalle_Final']))[:55]
+
+                pdf.cell(35, 5, " " + maq_str, 1, 0, 'L', True)
+                pdf.cell(20, 5, ini_str, 1, 0, 'C', True)
+                pdf.cell(20, 5, fin_str, 1, 0, 'C', True)
+                pdf.cell(25, 5, dur_str, 1, 0, 'C', True)
+                pdf.cell(90, 5, " " + desc_str, 1, 1, 'L', True)
+
+                fill_toggle_p = not fill_toggle_p
+            pdf.ln(5)
+        else:
+            pdf.set_font("Arial", 'I', 9)
+            pdf.set_text_color(100, 100, 100)
+            pdf.cell(0, 6, clean_text("No hay paradas programadas registradas para este grupo en este periodo."), ln=True)
+            pdf.ln(5)
+
+        pdf.set_text_color(0, 0, 0)
+        
+        # -----------------------------------------------------------------
         # CUADRO RESUMEN POR MÁQUINAS (Fluye naturalmente)
         # -----------------------------------------------------------------
         maquinas_con_tiempo = []
@@ -1278,6 +1343,9 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                     
                 pdf.cell(20, 5, f"{perf_val}%", 'B', 1, 'C'); pdf.set_text_color(50, 50, 50)
             pdf.ln(5)
+        else:
+            pdf.set_font("Arial", 'I', 10)
+            pdf.cell(0, 10, clean_text("No hay datos de performance para los operarios de esta área."), ln=True)
     else:
         pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay datos de performance registrados para esta área en este período."), ln=True)
 
