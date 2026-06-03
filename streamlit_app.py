@@ -145,7 +145,7 @@ def fetch_data_from_db(fecha_ini, fecha_fin, tipo_periodo, mes=None, anio=None):
                 df_op_raw['ProductiveTime'] = pd.to_numeric(df_op_raw['ProductiveTime'], errors='coerce').fillna(0)
                 df_op_raw['Perf_Num'] = df_op_raw['Performance'] * df_op_raw['ProductiveTime']
                 
-                # CORRECCIÓN AQUÍ PARA OPERARIOS
+                # CORRECCIÓN PARA OPERARIOS
                 df_op_raw['Fábrica'] = df_op_raw['Fábrica'].fillna('No Asignada')
                 
                 df_op_target = df_op_raw.groupby(['Operador', 'Fábrica']).agg(
@@ -1065,7 +1065,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         # -----------------------------------------------------------------
         # DETALLE DE PARADAS PROGRAMADAS
         # -----------------------------------------------------------------
-        check_space(pdf, 35)
+        check_space(pdf, 50)
         print_section_title(pdf, "Detalle de Paradas Programadas", theme_color)
 
         df_paradas_g = df_pdf_g[df_pdf_g['Estado_Global'] == 'Parada Programada'].copy()
@@ -1135,7 +1135,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 if t_total > 0: maquinas_con_tiempo.append(maq)
 
         if maquinas_con_tiempo:
-            check_space(pdf, 40)
+            check_space(pdf, 55)
             pdf.set_link(links_detalle_grupo[g])
             print_section_title(pdf, f"Cuadro Resumen por Máquinas - Grupo {g}", theme_color)
 
@@ -1261,7 +1261,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 df_m_prod = df_prod_pdf_g[df_prod_pdf_g['Máquina'] == maq_p].groupby('Código')[['Buenas', 'Retrabajo', 'Observadas']].sum().reset_index()
                 total_piezas = df_m_prod['Buenas'].sum() + df_m_prod['Retrabajo'].sum() + df_m_prod['Observadas'].sum()
                 
-                check_space(pdf, 25)
+                check_space(pdf, 45)
                 pdf.set_font("Arial", 'B', 9); pdf.set_text_color(*theme_color)
                 pdf.cell(0, 5, clean_text(f"Top 5 Códigos Producidos - {maq_p} (Total: {int(total_piezas)} pzs)"), ln=True)
                 
@@ -1281,7 +1281,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
     # =========================================================================
     # SECCIÓN FINAL OPERARIOS 
     # =========================================================================
-    check_space(pdf, 30)
+    check_space(pdf, 45)
     if pdf.get_y() > 30:
         pdf.ln(10); pdf.set_draw_color(*theme_color); pdf.set_line_width(1); pdf.line(10, pdf.get_y(), 200, pdf.get_y())
         pdf.set_draw_color(0, 0, 0); pdf.set_line_width(0.2); pdf.ln(10)
@@ -1350,7 +1350,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         pdf.set_font("Arial", 'I', 10); pdf.cell(0, 10, clean_text("No hay datos de performance registrados para esta área en este período."), ln=True)
 
     def agregar_tabla_tiempos(titulo, palabras_clave, limite_minutos):
-        check_space(pdf, 25); print_section_title(pdf, titulo, theme_color)
+        check_space(pdf, 45); print_section_title(pdf, titulo, theme_color)
         resumen_eventos = {}
         
         if not df_pdf.empty:
