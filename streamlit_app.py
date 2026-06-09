@@ -1440,6 +1440,10 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
             # 1. Procesamiento de datos
             df_opl = pd.read_csv(io.StringIO(datos_pegados), sep='\t', dtype=str)
             df_opl.columns = df_opl.columns.str.strip()
+            
+            # ¡CLAVE! Guardamos las columnas originales antes de agregar nuestras columnas de cálculo
+            columnas_originales = list(df_opl.columns)
+
             for col in df_opl.columns:
                 df_opl[col] = df_opl[col].astype(str).str.replace('⊟', '', regex=False).str.strip()
                 df_opl[col] = df_opl[col].replace('nan', '')
@@ -1451,7 +1455,6 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
                 if 'SOLDADURA' in proc: return 'Soldadura'
                 return 'Otro'
             
-            # Cambiado a Area_Proceso para evitar referencias a la empresa
             df_opl['Area_Proceso'] = df_opl['nombre proceso'].apply(clasific_area)
             c_est = len(df_opl[df_opl['Area_Proceso'] == 'Estampado'])
             c_sol = len(df_opl[df_opl['Area_Proceso'] == 'Soldadura'])
@@ -1511,8 +1514,8 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
             for f in fechas_p:
                 row_colors.append('#FFCDD2' if (pd.notna(f) and f == f_obj) else '#F8F9F9')
 
-            # Se toman todas las columnas dinámicamente para asegurar que aparezca "OPL"
-            cols_tabla = list(df_opl.columns)
+            # Usamos estrictamente las columnas originales capturadas arriba
+            cols_tabla = columnas_originales
             
             fig_reporte.add_trace(go.Table(
                 header=dict(
