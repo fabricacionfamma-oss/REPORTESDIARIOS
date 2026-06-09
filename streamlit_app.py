@@ -1532,7 +1532,7 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
                 )
             ), row=3, col=1)
 
-n_filas = len(df_opl)
+            n_filas = len(df_opl)
             fig_reporte.update_layout(
                 title=dict(
                     text=f"<b>REPORTE INTEGRAL OPL</b><br><sup>Total de registros: {len(df_opl)} | Novedades en rojo del {f_obj_str}</sup>", 
