@@ -1532,18 +1532,25 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
                 )
             ), row=3, col=1)
 
-            n_filas = len(df_opl)
+           n_filas = len(df_opl)
             fig_reporte.update_layout(
                 title=dict(
                     text=f"<b>REPORTE INTEGRAL OPL</b><br><sup>Total de registros: {len(df_opl)} | Novedades en rojo del {f_obj_str}</sup>", 
                     font=dict(size=22)
+                ),
+                # --- AQUÍ CONFIGURAMOS LA LEYENDA HORIZONTAL ARRIBA DEL GRÁFICO ---
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=0.86, # Posición vertical justo arriba de la línea de tendencia
+                    xanchor="center",
+                    x=0.5   # Centrado horizontalmente
                 ),
                 width=1300,
                 height=800 + (n_filas * 35), 
                 plot_bgcolor='white',
                 margin=dict(t=130, b=20, l=20, r=20)
             )
-
             img_bytes = fig_reporte.to_image(format="png", engine="kaleido", scale=2)
             
             st.success(f"✅ Reporte visual generado exitosamente (detectadas {len(df_opl)} OPLs). Previsualización a continuación:")
