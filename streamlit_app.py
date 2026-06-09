@@ -1451,9 +1451,10 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
                 if 'SOLDADURA' in proc: return 'Soldadura'
                 return 'Otro'
             
-            df_opl['Area_FAMMA'] = df_opl['nombre proceso'].apply(clasific_area)
-            c_est = len(df_opl[df_opl['Area_FAMMA'] == 'Estampado'])
-            c_sol = len(df_opl[df_opl['Area_FAMMA'] == 'Soldadura'])
+            # Cambiado a Area_Proceso para evitar referencias a la empresa
+            df_opl['Area_Proceso'] = df_opl['nombre proceso'].apply(clasific_area)
+            c_est = len(df_opl[df_opl['Area_Proceso'] == 'Estampado'])
+            c_sol = len(df_opl[df_opl['Area_Proceso'] == 'Soldadura'])
             
             # Fecha objetivo para resaltado
             hoy = pd.to_datetime("today").normalize()
@@ -1478,7 +1479,7 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
             if col_f:
                 df_opl['F_DT'] = pd.to_datetime(df_opl[col_f], dayfirst=True, errors='coerce')
                 
-                df_area_t = df_opl.groupby(['F_DT', 'Area_FAMMA']).size().reset_index(name='Cant').sort_values('F_DT')
+                df_area_t = df_opl.groupby(['F_DT', 'Area_Proceso']).size().reset_index(name='Cant').sort_values('F_DT')
                 df_total_t = df_opl.groupby('F_DT').size().reset_index(name='Cant').sort_values('F_DT')
                 
                 # Línea GENERAL (Total)
@@ -1492,7 +1493,7 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
 
                 # Líneas específicas por área
                 for area, color in [('Estampado', '#0F4C81'), ('Soldadura', '#D35400')]:
-                    subset = df_area_t[df_area_t['Area_FAMMA'] == area]
+                    subset = df_area_t[df_area_t['Area_Proceso'] == area]
                     fig_reporte.add_trace(go.Scatter(
                         x=subset['F_DT'], 
                         y=subset['Cant'], 
@@ -1510,7 +1511,9 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
             for f in fechas_p:
                 row_colors.append('#FFCDD2' if (pd.notna(f) and f == f_obj) else '#F8F9F9')
 
-            cols_tabla = list(df_opl.columns[:7])
+            # Se toman todas las columnas dinámicamente para asegurar que aparezca "OPL"
+            cols_tabla = list(df_opl.columns)
+            
             fig_reporte.add_trace(go.Table(
                 header=dict(
                     values=cols_tabla,
@@ -1529,7 +1532,7 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
             n_filas = len(df_opl)
             fig_reporte.update_layout(
                 title=dict(
-                    text=f"<b>REPORTE INTEGRAL OPL - FAMMA</b><br><sup>Total de registros: {len(df_opl)} | Novedades en rojo del {f_obj_str}</sup>", 
+                    text=f"<b>REPORTE INTEGRAL OPL</b><br><sup>Total de registros: {len(df_opl)} | Novedades en rojo del {f_obj_str}</sup>", 
                     font=dict(size=22)
                 ),
                 width=1300,
@@ -1546,14 +1549,13 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
             st.download_button(
                 label="📥 Descargar Reporte OPL Unificado (PNG)",
                 data=img_bytes,
-                file_name=f"Reporte_OPL_FAMMA_{hoy.strftime('%Y%m%d')}.png",
+                file_name=f"Reporte_OPL_{hoy.strftime('%Y%m%d')}.png",
                 mime="image/png",
                 use_container_width=True
             )
 
         except Exception as e:
             st.error(f"Error al procesar la imagen: {e}")
-
 # ==========================================
 # 6. BOTONES DE EXPORTACIÓN EN PANTALLA
 # ==========================================
