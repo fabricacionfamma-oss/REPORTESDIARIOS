@@ -980,7 +980,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         pdf.cell(38, 5, clean_text(mins_to_duration_str(t_proy_g)), border=1, align='C')
         pdf.cell(38, 5, clean_text(mins_to_duration_str(t_desc_g)), border=1, align='C', ln=True); pdf.ln(4)
         
-        # --- Análisis de Fallas + Tortas agrupadas juntas ---
+        # --- Análisis de Fallas + Tortas agrupadas juntas (Formato Fumiscor sin cortes extras) ---
         check_space(pdf, 170)
         print_section_title(pdf, "Análisis de Fallas, Tendencias y Estructura Visual", theme_color)
 
@@ -1452,7 +1452,12 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
                 if 'SOLDADURA' in proc: return 'Soldadura'
                 return 'Otro'
             
-            df_opl['Area_Proceso'] = df_opl['nombre proceso'].apply(clasific_area)
+            # Se usa el nombre de la columna adaptado para poder coincidir si cambia
+            col_proceso = next((c for c in df_opl.columns if 'proceso' in c.lower()), None)
+            if not col_proceso:
+                raise Exception("No se encontró la columna 'nombre proceso'. Verifica los encabezados.")
+
+            df_opl['Area_Proceso'] = df_opl[col_proceso].apply(clasific_area)
             c_est = len(df_opl[df_opl['Area_Proceso'] == 'Estampado'])
             c_sol = len(df_opl[df_opl['Area_Proceso'] == 'Soldadura'])
             
@@ -1477,34 +1482,65 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
             # --- SECCIÓN 2 (Imagen): TENDENCIA (GENERAL, ESTAMPADO, SOLDADURA) ---
             col_f = next((c for c in df_opl.columns if 'fecha' in c.lower()), None)
             if col_f:
+                # Convertir a datetime de forma segura
                 df_opl['F_DT'] = pd.to_datetime(df_opl[col_f], dayfirst=True, errors='coerce')
                 
-                df_area_t = df_opl.groupby(['F_DT', 'Area_Proceso']).size().reset_index(name='Cant').sort_values('F_DT')
-                df_total_t = df_opl.groupby('F_DT').size().reset_index(name='Cant').sort_values('F_DT')
+                # Filtrar filas donde la fecha sea válida para no arrastrar celdas vacías
+                df_trend_data = df_opl[df_opl['F_DT'].notna()].copy()
                 
-                # Línea GENERAL (Total)
-                fig_reporte.add_trace(go.Scatter(
-                    x=df_total_t['F_DT'], 
-                    y=df_total_t['Cant'], 
-                    name='GENERAL (Total)', 
-                    line=dict(color='#7F8C8D', width=4, dash='dot'),
-                    mode='lines+markers'
-                ), row=2, col=1)
+                if not df_trend_data.empty:
+                    # Ordenar cronológicamente para asegurar que el min y max sean los correctos
+                    df_trend_data = df_trend_data.sort_values('F_DT')
+                    
+                    # Tomar estrictamente el primer día registrado y el último
+                    min_date = df_trend_data['F_DT'].min()
+                    max_date = df_trend_data['F_DT'].max()
+                    
+                    # Generar el vector con todos los días intermedios de forma consecutiva
+                    fechas_completas = pd.date_range(start=min_date, end=max_date)
 
-                # Líneas específicas por área
-                for area, color in [('Estampado', '#0F4C81'), ('Soldadura', '#D35400')]:
-                    subset = df_area_t[df_area_t['Area_Proceso'] == area]
+                    # 1. Total General rellenando los días vacíos con 0
+                    df_total_t = df_trend_data.groupby('F_DT').size().reindex(fechas_completas, fill_value=0).reset_index()
+                    df_total_t.columns = ['F_DT', 'Cant']
+
+                    # 2. Desglose por Área rellenando los días vacíos con 0
+                    df_area_t = df_trend_data.groupby(['F_DT', 'Area_Proceso']).size().unstack(fill_value=0)
+                    df_area_t = df_area_t.reindex(fechas_completas, fill_value=0).reset_index()
+                    df_area_t.rename(columns={'index': 'F_DT'}, inplace=True)
+                    df_area_t = df_area_t.melt(id_vars='F_DT', var_name='Area_Proceso', value_name='Cant')
+                    
+                    # Graficar líneas en el Subplot fila 2
+                    # Línea GENERAL (Total planta)
                     fig_reporte.add_trace(go.Scatter(
-                        x=subset['F_DT'], 
-                        y=subset['Cant'], 
-                        name=area, 
-                        line=dict(color=color, width=3), 
+                        x=df_total_t['F_DT'], 
+                        y=df_total_t['Cant'], 
+                        name='GENERAL (Total)', 
+                        line=dict(color='#7F8C8D', width=4, dash='dot'),
                         mode='lines+markers'
                     ), row=2, col=1)
-                
-                fig_reporte.update_xaxes(title_text="Fecha de Alta", row=2, col=1)
-                # SE AGREGA RANGEMODE="TOZERO" AQUÍ
-                fig_reporte.update_yaxes(title_text="Cantidad Reclamos", rangemode="tozero", row=2, col=1)
+
+                    # Líneas específicas por área
+                    colores_map = {'Estampado': '#0F4C81', 'Soldadura': '#D35400'}
+                    for area in ['Estampado', 'Soldadura']:
+                        subset = df_area_t[df_area_t['Area_Proceso'] == area]
+                        if not subset.empty:
+                            fig_reporte.add_trace(go.Scatter(
+                                x=subset['F_DT'], 
+                                y=subset['Cant'], 
+                                name=area, 
+                                line=dict(color=colores_map[area], width=3), 
+                                mode='lines+markers'
+                            ), row=2, col=1)
+                    
+                    # Forzar a que el eje X muestre exactamente desde el primer hasta el último día
+                    fig_reporte.update_xaxes(
+                        title_text="Fecha de Alta", 
+                        type='date', 
+                        tickformat="%d/%m", 
+                        range=[min_date - timedelta(hours=12), max_date + timedelta(hours=12)], 
+                        row=2, col=1
+                    )
+                    fig_reporte.update_yaxes(title_text="Cantidad Reclamos", rangemode="tozero", row=2, col=1)
 
             # --- SECCIÓN 3 (Imagen): TABLA DETALLADA ---
             row_colors = []
@@ -1643,7 +1679,8 @@ if maq_ocultas:
     df_raw = df_raw[~df_raw['Máquina'].isin(maq_ocultas)]
     pdf_df_prod_target = pdf_df_prod_target[~pdf_df_prod_target['Máquina'].isin(maq_ocultas)]
     df_trend = df_trend[~df_trend['Máquina'].isin(maq_ocultas)]
-    df_horarios = df_horarios[~df_horarios['Máquina'].isin(maq_ocultas)]
+    if not df_horarios.empty:
+        df_horarios = df_horarios[~df_horarios['Máquina'].isin(maq_ocultas)]
 
 # ==========================================
 # 6. BOTONES DE EXPORTACIÓN EN PANTALLA
@@ -1651,7 +1688,7 @@ if maq_ocultas:
 st.divider()
 
 with col_p3:
-    st.write("**3. Generar y Descargar:**")
+    st.write("**3. Generar y Descargar PDF:**")
     
     if pdf_tipo == "Mensual":
         col_btn1, col_btn2, col_btn3 = st.columns(3)
@@ -1702,6 +1739,6 @@ with col_p3:
                 with st.spinner("Generando Resumen Ejecutivo Global..."):
                     try:
                         pdf_resumen = crear_pdf_resumen_ejecutivo(pdf_label, df_trend, df_metrics)
-                        st.download_button("Descargar Resumen", data=pdf_resumen, file_name=f"FAMMA_Resumen_Planta_{file_label}.pdf", mime="application/pdf", use_container_width=True)
+                        st.download_button("Descargar Resumen", data=pdf_resumen, file_name=f"FAMMA_Resumen_Global_{file_label}.pdf", mime="application/pdf", use_container_width=True)
                     except Exception as e:
                         st.error(f"Error generando PDF: {e}")
