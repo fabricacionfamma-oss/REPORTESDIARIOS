@@ -671,7 +671,7 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
-# 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL (FAMMA con formato FUMISCOR)
+# 5.B. MOTOR GENERADOR DEL PDF PRINCIPAL (FAMMA)
 # ==========================================
 def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_tipo, df_trend, df_metrics_pdf, df_horarios):
     if area.upper() == "ESTAMPADO":
@@ -744,8 +744,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         r = maq_row.iloc[0]
         
         def escalar_porcentaje(val):
-            if pd.isna(val):
-                return 0.0
+            if pd.isna(val): return 0.0
             return float(val) * 100.0
 
         return {
@@ -800,7 +799,6 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         pdf.ln(3)
 
         # 2. GRÁFICOS DE EVOLUCIÓN (MENSUAL) O KPIS POR MÁQUINA (DIARIO/SEMANAL)
-        # ESTILO FUMISCOR: fluye directamente sin forzar saltos de página extraños
         if p_tipo == "Mensual":
             print_section_title(pdf, "2. Evolución Histórica OEE por Máquina", theme_color)
             if not df_trend.empty:
@@ -982,7 +980,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         pdf.cell(38, 5, clean_text(mins_to_duration_str(t_proy_g)), border=1, align='C')
         pdf.cell(38, 5, clean_text(mins_to_duration_str(t_desc_g)), border=1, align='C', ln=True); pdf.ln(4)
         
-        # --- Análisis de Fallas + Tortas agrupadas juntas (Formato Fumiscor sin cortes extras) ---
+        # --- Análisis de Fallas + Tortas agrupadas juntas ---
         check_space(pdf, 170)
         print_section_title(pdf, "Análisis de Fallas, Tendencias y Estructura Visual", theme_color)
 
@@ -1354,7 +1352,6 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         resumen_eventos = {}
         
         if not df_pdf.empty:
-            # FILTRO EXACTO: Miramos SOLO la columna 'Detalle_Final' sin deduplicación
             def clasificar_fila(val):
                 if pd.isna(val): return False
                 val_upper = str(val).upper()
@@ -1506,7 +1503,8 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
                     ), row=2, col=1)
                 
                 fig_reporte.update_xaxes(title_text="Fecha de Alta", row=2, col=1)
-                fig_reporte.update_yaxes(title_text="Cantidad Reclamos", row=2, col=1)
+                # SE AGREGA RANGEMODE="TOZERO" AQUÍ
+                fig_reporte.update_yaxes(title_text="Cantidad Reclamos", rangemode="tozero", row=2, col=1)
 
             # --- SECCIÓN 3 (Imagen): TABLA DETALLADA ---
             row_colors = []
@@ -1538,7 +1536,6 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
                     text=f"<b>REPORTE INTEGRAL OPL</b><br><sup>Total de registros: {len(df_opl)} | Novedades en rojo del {f_obj_str}</sup>", 
                     font=dict(size=22)
                 ),
-                # --- AQUÍ CONFIGURAMOS LA LEYENDA HORIZONTAL ARRIBA DEL GRÁFICO ---
                 legend=dict(
                     orientation="h",
                     yanchor="bottom",
@@ -1567,6 +1564,87 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
 
         except Exception as e:
             st.error(f"Error al procesar la imagen: {e}")
+
+# ==========================================
+# 5.5. EDITOR MANUAL DEL REPORTE (NUEVO)
+# ==========================================
+st.divider()
+with st.expander("🛠️ Editor Manual de Datos (Ajustes antes de exportar el PDF)", expanded=False):
+    st.markdown("Utiliza estas tablas para alterar los datos. **Los cambios que realices aquí se reflejarán directamente en los totales, gráficos e indicadores del PDF (tanto Diario como Semanal o Mensual).**")
+
+    # --- 1. OCULTAR MÁQUINAS ---
+    st.markdown("#### 1. Ocultar Máquinas")
+    maquinas_lista = sorted(df_metrics['Máquina'].unique().tolist()) if not df_metrics.empty else []
+    maq_ocultas = st.multiselect("Selecciona las máquinas que NO quieres que aparezcan en este reporte:", maquinas_lista)
+
+    # --- 2. EDITAR KPIs Y HORAS TOTALES ---
+    st.markdown("#### 2. Modificar KPIs y Horas Totales por Máquina")
+    st.info("💡 **Tip:** Si eliminas una falla en el paso 4, recuerda ajustar aquí el **T_Parada** (restando esos minutos) y el **T_Operativo** (sumándolos) para que los cuadros resumen de arriba coincidan. También puedes sobreescribir el % de OEE y demás indicadores.")
+    if not df_metrics.empty:
+        df_metrics = st.data_editor(
+            df_metrics,
+            disabled=["Máquina"], # Desbloqueamos TODAS las columnas numéricas
+            hide_index=True,
+            key="editor_kpi",
+            use_container_width=True
+        )
+    else:
+        st.caption("No hay métricas cargadas.")
+
+    # --- 3. EDITAR PRODUCCIÓN ---
+    st.markdown("#### 3. Modificar Desglose de Producción")
+    st.caption("Ajusta manualmente la cantidad de piezas Buenas, Retrabajo u Observadas por código de producto.")
+    if not pdf_df_prod_target.empty:
+        pdf_df_prod_target = st.data_editor(
+            pdf_df_prod_target,
+            disabled=["Máquina", "Código"],
+            hide_index=True,
+            key="editor_prod",
+            use_container_width=True
+        )
+    else:
+        st.caption("No hay datos de producción.")
+
+    # --- 4. EDITAR EVENTOS, HORARIOS Y FALLAS ---
+    st.markdown("#### 4. Modificar Horarios o Eliminar Eventos (Fallas/Paradas)")
+    st.caption("Para **eliminar un evento**, selecciona la casilla izquierda de la fila y presiona la tecla `Suprimir` (o el ícono de la papelera). Puedes modificar `Inicio_Str`, `Fin_Str` y `Tiempo (Min)` directamente en las celdas.")
+    if not df_raw.empty:
+        df_raw = st.data_editor(
+            df_raw,
+            num_rows="dynamic", # Permite agregar o eliminar filas enteras
+            column_config={
+                "Evento_Id": None,
+                "Categoria_Macro": None,
+                "Estado_Global": st.column_config.TextColumn(disabled=True),
+            },
+            key="editor_eventos",
+            use_container_width=True
+        )
+    else:
+        st.caption("No hay eventos en este período para editar.")
+
+    # --- 5. EDITAR PERFORMANCE OPERARIOS ---
+    st.markdown("#### 5. Modificar Performance de Operarios")
+    st.caption("Si necesitas corregir el porcentaje de rendimiento de algún operador, hazlo aquí.")
+    if not pdf_df_op_target.empty:
+        pdf_df_op_target = st.data_editor(
+            pdf_df_op_target,
+            disabled=["Operador", "Fábrica"],
+            hide_index=True,
+            key="editor_op",
+            use_container_width=True
+        )
+    else:
+        st.caption("No hay datos de operarios.")
+
+# --- APLICAR FILTRO DE MÁQUINAS OCULTAS AL RESTO DEL CÓDIGO ---
+if maq_ocultas:
+    df_metrics = df_metrics[~df_metrics['Máquina'].isin(maq_ocultas)]
+    df_raw = df_raw[~df_raw['Máquina'].isin(maq_ocultas)]
+    pdf_df_prod_target = pdf_df_prod_target[~pdf_df_prod_target['Máquina'].isin(maq_ocultas)]
+    df_trend = df_trend[~df_trend['Máquina'].isin(maq_ocultas)]
+    df_horarios = df_horarios[~df_horarios['Máquina'].isin(maq_ocultas)]
+
 # ==========================================
 # 6. BOTONES DE EXPORTACIÓN EN PANTALLA
 # ==========================================
