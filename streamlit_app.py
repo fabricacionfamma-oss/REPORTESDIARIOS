@@ -980,7 +980,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         pdf.cell(38, 5, clean_text(mins_to_duration_str(t_proy_g)), border=1, align='C')
         pdf.cell(38, 5, clean_text(mins_to_duration_str(t_desc_g)), border=1, align='C', ln=True); pdf.ln(4)
         
-        # --- Análisis de Fallas + Tortas agrupadas juntas (Formato Fumiscor sin cortes extras) ---
+        # --- Análisis de Fallas + Tortas agrupadas juntas ---
         check_space(pdf, 170)
         print_section_title(pdf, "Análisis de Fallas, Tendencias y Estructura Visual", theme_color)
 
@@ -1533,11 +1533,15 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
                             ), row=2, col=1)
                     
                     # Forzar a que el eje X muestre exactamente desde el primer hasta el último día
+                    # Convertimos a string para evitar el error de JSON serializable con Kaleido
+                    r_start = (min_date - timedelta(hours=12)).strftime('%Y-%m-%d %H:%M:%S')
+                    r_end = (max_date + timedelta(hours=12)).strftime('%Y-%m-%d %H:%M:%S')
+                    
                     fig_reporte.update_xaxes(
                         title_text="Fecha de Alta", 
                         type='date', 
                         tickformat="%d/%m", 
-                        range=[min_date - timedelta(hours=12), max_date + timedelta(hours=12)], 
+                        range=[r_start, r_end], 
                         row=2, col=1
                     )
                     fig_reporte.update_yaxes(title_text="Cantidad Reclamos", rangemode="tozero", row=2, col=1)
