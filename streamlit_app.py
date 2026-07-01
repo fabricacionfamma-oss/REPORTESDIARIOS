@@ -1069,51 +1069,156 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
         df_paradas_g = df_pdf_g[df_pdf_g['Estado_Global'] == 'Parada Programada'].copy()
 
         if not df_paradas_g.empty:
-            df_paradas_g = df_paradas_g.sort_values(['Máquina', 'Inicio'])
+            
+            if p_tipo == "Mensual":
+                # --- 1. TABLA RESUMEN (SOLO MENSUAL) ---
+                pdf.set_font("Arial", 'B', 10)
+                pdf.set_text_color(*theme_color)
+                pdf.cell(0, 6, clean_text("Resumen por Tipo de Parada Programada"), ln=True)
+                pdf.ln(2)
 
-            def dibujar_cabeza_paradas():
+                # Calcular resumen
+                resumen_paradas = df_paradas_g.groupby('Detalle_Final').agg(
+                    Cantidad=('Máquina', 'count'),
+                    Tiempo_Total=('Tiempo (Min)', 'sum')
+                ).reset_index()
+                resumen_paradas['Tiempo_Promedio'] = resumen_paradas['Tiempo_Total'] / resumen_paradas['Cantidad']
+                resumen_paradas = resumen_paradas.sort_values('Tiempo_Total', ascending=False)
+
                 setup_table_header(pdf, theme_color)
                 pdf.set_font("Arial", 'B', 8)
-                pdf.cell(35, 6, "Maquina", 1, 0, 'C', True)
-                pdf.cell(20, 6, "Inicio", 1, 0, 'C', True)
-                pdf.cell(20, 6, "Fin", 1, 0, 'C', True)
-                pdf.cell(25, 6, "Duracion", 1, 0, 'C', True)
-                pdf.cell(90, 6, "Descripcion de la Parada", 1, 1, 'C', True)
+                pdf.cell(85, 6, "Tipo de Evento", 1, 0, 'C', True)
+                pdf.cell(35, 6, "Tiempo Total", 1, 0, 'C', True)
+                pdf.cell(35, 6, "Cant. Eventos", 1, 0, 'C', True)
+                pdf.cell(35, 6, "Tiempo Promedio", 1, 1, 'C', True)
 
-            dibujar_cabeza_paradas()
-            setup_table_row(pdf)
-            pdf.set_font("Arial", '', 8)
+                setup_table_row(pdf)
+                pdf.set_font("Arial", '', 8)
+                
+                for _, r_res in resumen_paradas.iterrows():
+                    if pdf.get_y() > 265:
+                        pdf.add_page(); setup_table_header(pdf, theme_color); pdf.set_font("Arial", 'B', 8)
+                        pdf.cell(85, 6, "Tipo de Evento", 1, 0, 'C', True); pdf.cell(35, 6, "Tiempo Total", 1, 0, 'C', True)
+                        pdf.cell(35, 6, "Cant. Eventos", 1, 0, 'C', True); pdf.cell(35, 6, "Tiempo Promedio", 1, 1, 'C', True)
+                        setup_table_row(pdf); pdf.set_font("Arial", '', 8)
 
-            fill_toggle_p = False
-            for _, r_par in df_paradas_g.iterrows():
-                if pdf.get_y() > 265:
-                    pdf.add_page()
-                    dibujar_cabeza_paradas()
+                    pdf.cell(85, 5, " " + clean_text(str(r_res['Detalle_Final']))[:50], 1, 0, 'L')
+                    pdf.cell(35, 5, clean_text(mins_to_duration_str(r_res['Tiempo_Total'])), 1, 0, 'C')
+                    pdf.cell(35, 5, str(int(r_res['Cantidad'])), 1, 0, 'C')
+                    pdf.cell(35, 5, clean_text(mins_to_duration_str(r_res['Tiempo_Promedio'])), 1, 1, 'C')
+
+                pdf.ln(6)
+
+                # --- 2. LISTADO DETALLADO SEPARADO POR TIPO (SOLO MENSUAL) ---
+                pdf.set_font("Arial", 'B', 10)
+                pdf.set_text_color(*theme_color)
+                pdf.cell(0, 6, clean_text("Listado Detallado por Tipo de Parada"), ln=True)
+                pdf.ln(2)
+
+                def dibujar_cabeza_paradas_mensual():
+                    setup_table_header(pdf, theme_color)
+                    pdf.set_font("Arial", 'B', 8)
+                    pdf.cell(45, 6, "Maquina", 1, 0, 'C', True)
+                    pdf.cell(25, 6, "Fecha", 1, 0, 'C', True)
+                    pdf.cell(15, 6, "Inicio", 1, 0, 'C', True)
+                    pdf.cell(15, 6, "Fin", 1, 0, 'C', True)
+                    pdf.cell(20, 6, "Duracion", 1, 0, 'C', True)
+                    pdf.cell(70, 6, "Operador Involucrado", 1, 1, 'C', True)
+
+                # Agrupar e iterar por cada tipo de evento
+                for tipo_ev, grupo_ev in df_paradas_g.groupby('Detalle_Final'):
+                    check_space(pdf, 25)
+                    pdf.set_font("Arial", 'B', 9)
+                    pdf.set_text_color(*theme_color)
+                    pdf.set_fill_color(240, 240, 240)
+                    pdf.cell(0, 6, clean_text(f">> {tipo_ev}"), 0, 1, 'L', fill=True)
+
+                    dibujar_cabeza_paradas_mensual()
                     setup_table_row(pdf)
                     pdf.set_font("Arial", '', 8)
 
-                if fill_toggle_p:
-                    if area.upper() == "ESTAMPADO":
-                        pdf.set_fill_color(235, 243, 250)
+                    fill_toggle_p = False
+                    # Ordenar por fecha e inicio
+                    for _, r_par in grupo_ev.sort_values(['Fecha_Filtro', 'Inicio']).iterrows():
+                        if pdf.get_y() > 265:
+                            pdf.add_page()
+                            dibujar_cabeza_paradas_mensual()
+                            setup_table_row(pdf)
+                            pdf.set_font("Arial", '', 8)
+
+                        if fill_toggle_p:
+                            if area.upper() == "ESTAMPADO": pdf.set_fill_color(235, 243, 250)
+                            else: pdf.set_fill_color(253, 242, 233)
+                        else:
+                            pdf.set_fill_color(255, 255, 255)
+
+                        maq_str = clean_text(str(r_par['Máquina']))[:22]
+                        fecha_str = pd.to_datetime(r_par['Fecha_Filtro']).strftime('%d/%m/%Y') if pd.notna(r_par['Fecha_Filtro']) else "-"
+                        ini_str = clean_text(str(r_par['Inicio_Str']))
+                        fin_str = clean_text(str(r_par['Fin_Str']))
+                        dur_str = f"{r_par['Tiempo (Min)']:.0f} min"
+                        
+                        # Como ya agrupamos por tipo, en lugar de repetir la descripcion mostramos el operador
+                        op_str = clean_text(str(r_par['Operador']))[:40]
+
+                        pdf.cell(45, 5, " " + maq_str, 1, 0, 'L', True)
+                        pdf.cell(25, 5, fecha_str, 1, 0, 'C', True)
+                        pdf.cell(15, 5, ini_str, 1, 0, 'C', True)
+                        pdf.cell(15, 5, fin_str, 1, 0, 'C', True)
+                        pdf.cell(20, 5, dur_str, 1, 0, 'C', True)
+                        pdf.cell(70, 5, " " + op_str, 1, 1, 'L', True)
+
+                        fill_toggle_p = not fill_toggle_p
+                    pdf.ln(3)
+
+            else:
+                # --- LÓGICA ORIGINAL PARA REPORTE DIARIO Y SEMANAL ---
+                df_paradas_g = df_paradas_g.sort_values(['Máquina', 'Inicio'])
+
+                def dibujar_cabeza_paradas():
+                    setup_table_header(pdf, theme_color)
+                    pdf.set_font("Arial", 'B', 8)
+                    pdf.cell(35, 6, "Maquina", 1, 0, 'C', True)
+                    pdf.cell(20, 6, "Inicio", 1, 0, 'C', True)
+                    pdf.cell(20, 6, "Fin", 1, 0, 'C', True)
+                    pdf.cell(25, 6, "Duracion", 1, 0, 'C', True)
+                    pdf.cell(90, 6, "Descripcion de la Parada", 1, 1, 'C', True)
+
+                dibujar_cabeza_paradas()
+                setup_table_row(pdf)
+                pdf.set_font("Arial", '', 8)
+
+                fill_toggle_p = False
+                for _, r_par in df_paradas_g.iterrows():
+                    if pdf.get_y() > 265:
+                        pdf.add_page()
+                        dibujar_cabeza_paradas()
+                        setup_table_row(pdf)
+                        pdf.set_font("Arial", '', 8)
+
+                    if fill_toggle_p:
+                        if area.upper() == "ESTAMPADO":
+                            pdf.set_fill_color(235, 243, 250)
+                        else:
+                            pdf.set_fill_color(253, 242, 233)
                     else:
-                        pdf.set_fill_color(253, 242, 233)
-                else:
-                    pdf.set_fill_color(255, 255, 255)
+                        pdf.set_fill_color(255, 255, 255)
 
-                maq_str = clean_text(str(r_par['Máquina']))[:18]
-                ini_str = clean_text(str(r_par['Inicio_Str']))
-                fin_str = clean_text(str(r_par['Fin_Str']))
-                dur_str = f"{r_par['Tiempo (Min)']:.0f} min"
-                desc_str = clean_text(str(r_par['Detalle_Final']))[:55]
+                    maq_str = clean_text(str(r_par['Máquina']))[:18]
+                    ini_str = clean_text(str(r_par['Inicio_Str']))
+                    fin_str = clean_text(str(r_par['Fin_Str']))
+                    dur_str = f"{r_par['Tiempo (Min)']:.0f} min"
+                    desc_str = clean_text(str(r_par['Detalle_Final']))[:55]
 
-                pdf.cell(35, 5, " " + maq_str, 1, 0, 'L', True)
-                pdf.cell(20, 5, ini_str, 1, 0, 'C', True)
-                pdf.cell(20, 5, fin_str, 1, 0, 'C', True)
-                pdf.cell(25, 5, dur_str, 1, 0, 'C', True)
-                pdf.cell(90, 5, " " + desc_str, 1, 1, 'L', True)
+                    pdf.cell(35, 5, " " + maq_str, 1, 0, 'L', True)
+                    pdf.cell(20, 5, ini_str, 1, 0, 'C', True)
+                    pdf.cell(20, 5, fin_str, 1, 0, 'C', True)
+                    pdf.cell(25, 5, dur_str, 1, 0, 'C', True)
+                    pdf.cell(90, 5, " " + desc_str, 1, 1, 'L', True)
 
-                fill_toggle_p = not fill_toggle_p
-            pdf.ln(5)
+                    fill_toggle_p = not fill_toggle_p
+                pdf.ln(5)
+
         else:
             pdf.set_font("Arial", 'I', 9)
             pdf.set_text_color(100, 100, 100)
