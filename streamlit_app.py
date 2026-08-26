@@ -595,7 +595,7 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
         fig_glob.update_yaxes(range=[0, 110])
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_glob:
-            fig_glob.write_image(tmp_glob.name, engine="kaleido")
+            fig_glob.write_image(tmp_glob.name)
             add_image_safe(pdf, tmp_glob.name, w_mm=190, h_mm=115, center=True)
             os.remove(tmp_glob.name)
 
@@ -663,7 +663,7 @@ def crear_pdf_resumen_ejecutivo(fecha_str, df_trend, df_metrics_pdf):
                     fig_m.update_yaxes(range=[0, 110])
                     
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_m:
-                        fig_m.write_image(tmp_m.name, engine="kaleido")
+                        fig_m.write_image(tmp_m.name)
                         pdf.set_y(y_curr + 15)
                         add_image_safe(pdf, tmp_m.name, w_mm=170, h_mm=85, center=True)
                         os.remove(tmp_m.name)
@@ -821,7 +821,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                     
                     y_base = pdf.get_y()
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_oee:
-                        fig_trend_oee.write_image(tmp_oee.name, engine="kaleido")
+                        fig_trend_oee.write_image(tmp_oee.name)
                         pdf.image(tmp_oee.name, x=10, y=y_base, w=190)
                         os.remove(tmp_oee.name)
                         
@@ -854,7 +854,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 
                 y_base = pdf.get_y()
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_kpi:
-                    fig_kpis.write_image(tmp_kpi.name, engine="kaleido")
+                    fig_kpis.write_image(tmp_kpi.name)
                     pdf.image(tmp_kpi.name, x=10, y=y_base, w=190)
                     os.remove(tmp_kpi.name)
                     
@@ -1013,12 +1013,12 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             fig_trend.update_layout(height=250, width=400, margin=dict(t=10, b=30, l=40, r=20), plot_bgcolor='rgba(0,0,0,0)', xaxis_title="", yaxis_title="Minutos", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title=""))
             
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_chart:
-                fig_top15.write_image(tmp_chart.name, engine="kaleido")
+                fig_top15.write_image(tmp_chart.name)
                 pdf.image(tmp_chart.name, x=5, y=y_base_graficos, w=105)
                 os.remove(tmp_chart.name)
                 
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_trend:
-                fig_trend.write_image(tmp_trend.name, engine="kaleido")
+                fig_trend.write_image(tmp_trend.name)
                 pdf.image(tmp_trend.name, x=110, y=y_base_graficos, w=90)
                 os.remove(tmp_trend.name)
                 
@@ -1036,7 +1036,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             fig_g.update_traces(textinfo='percent+label', textposition='outside', textfont_size=11)
             fig_g.update_layout(width=420, height=300, margin=dict(t=40, b=50, l=80, r=80), showlegend=False, plot_bgcolor='rgba(0,0,0,0)')
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp1:
-                fig_g.write_image(tmp1.name, engine="kaleido")
+                fig_g.write_image(tmp1.name)
             
             df_fallas_grupo = df_pdf_g[df_pdf_g['Estado_Global'] == 'Falla/Gestión'].copy()
             if not df_fallas_grupo.empty and df_fallas_grupo['Tiempo (Min)'].sum() > 0:
@@ -1045,7 +1045,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
                 fig_p.update_traces(textinfo='percent+label', textposition='outside', textfont_size=11)
                 fig_p.update_layout(width=420, height=300, margin=dict(t=40, b=50, l=80, r=80), showlegend=False, plot_bgcolor='rgba(0,0,0,0)')
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp2:
-                    fig_p.write_image(tmp2.name, engine="kaleido")
+                    fig_p.write_image(tmp2.name)
                     
                 pdf.image(tmp1.name, x=5, y=y_base, w=100)
                 pdf.image(tmp2.name, x=105, y=y_base, w=100)
@@ -1344,7 +1344,7 @@ def crear_pdf(area, label_reporte, op_target_df, prod_target_df, df_pdf_raw, p_t
             fig_prod = px.bar(prod_maq, x='Máquina', y=['Buenas', 'Retrabajo', 'Observadas'], barmode='stack', color_discrete_sequence=chart_bars, text_auto=True)
             fig_prod.update_layout(width=800, height=220, margin=dict(t=15, b=25, l=20, r=20))
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile3:
-                fig_prod.write_image(tmpfile3.name, engine="kaleido")
+                fig_prod.write_image(tmpfile3.name)
                 add_image_safe(pdf, tmpfile3.name, w_mm=155, h_mm=45)
                 os.remove(tmpfile3.name)
             
@@ -1694,7 +1694,7 @@ with st.expander("🚨 Generar Reporte de Alertas OPL (Dashboard + Imagen)", exp
                 margin=dict(t=130, b=20, l=20, r=20)
             )
 
-            img_bytes = fig_reporte.to_image(format="png", engine="kaleido", scale=2)
+            img_bytes = fig_reporte.to_image(format="png", scale=2)
             
             st.success(f"✅ Reporte visual generado exitosamente (detectadas {len(df_opl)} OPLs). Previsualización a continuación:")
             st.image(img_bytes, use_container_width=True)
