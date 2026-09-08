@@ -1,7 +1,7 @@
 streamlit>=1.39.0
 pandas
 plotly
-kaleido
+kaleido==0.2.1
 fpdf
 SQLAlchemy
 pymssql
